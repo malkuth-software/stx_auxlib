@@ -1,0 +1,17 @@
+# Code exempt from STX_AUXLIB_INTEGER_CHECKS (CMakeLists.txt). Each entry
+# says why; first-party code is exempted only while its owner annotates it.
+
+# Vendored: mimalloc's hashing and bit fields wrap by design.
+src:*/third_party/mimalloc/*
+# The C++ library's own headers (libc++'s chrono and locale code).
+src:*/include/c++/v1/*
+# stx_btree's unchanged tests: SplitMix64 (btree/tests/test_support.hpp)
+# is arithmetic modulo 2^64 by definition, and bbtree_map_test.cpp's
+# AddInto merges random 64-bit values, checked against the model update in
+# SingleThread::update_or_insert, which wraps the same way. The library's
+# own update_or_insert is not exempt. SumValues totals a map's values
+# for for_each_mut; in the batch test they are random, so the total wraps.
+fun:*SplitMix64*
+fun:*SumValues*
+fun:*AddInto*
+fun:*SingleThread*update_or_insert*

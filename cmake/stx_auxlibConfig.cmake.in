@@ -1,0 +1,6 @@
+@PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
+# The static library's workers are std::thread, which needs the host's
+# thread library at the consumer's link.
+find_dependency(Threads)
+include("${CMAKE_CURRENT_LIST_DIR}/stx_auxlibTargets.cmake")

@@ -1,0 +1,14 @@
+# ThreadSanitizer suppressions for stx_btree's shared map (btree/), used
+# only by its threaded tests. Optimistic lock coupling reads node bytes a
+# latched writer may be changing, then discards the result when the latch
+# version moved (btree/docs/DESIGN.md, "What the language model says about
+# it"). Those reads are races in the C++ memory model. Each entry below
+# names an optimistic reader only; a report whose stacks contain none of
+# them, such as two writers racing, is still reported and fails the test.
+# Surveyed 2026-10-31: every report paired a latched writer with one of
+# these readers.
+race:stx_btree::detail::InlineKeyCount*::count
+race:stx_btree::detail::LatchedTree*::get_copied
+race:stx_btree::detail::LatchedTree*::try_append
+race:stx_btree::detail::LatchedTree*::descend
+race:stx_btree::detail::LatchedBatch*

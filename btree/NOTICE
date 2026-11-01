@@ -1,0 +1,32 @@
+stx_btree
+Copyright (c) 2026 Joshuah Rainstar
+
+This product is a C++ form of bbtree, "the blessed B-tree", by
+Xiangpeng Hao: https://github.com/XiangpengHao/bbtree
+Copyright (c) 2026 Xiangpeng Hao
+bbtree is licensed under MIT OR Apache-2.0; stx_btree takes the MIT option
+and is offered under the MIT License (see LICENSE).
+
+stx_btree is a derivative work: its data structures, node layouts,
+algorithms, concurrency protocol and many of their comments are translated
+from bbtree's Rust source at commit 8adae97a0ed97e5c98fa2790312eb0aec9719846
+and from its design documents (design/*.md, decisions D1-D60). Every file
+was rewritten in C++20; the changes made in translation, and what was not
+translated, are listed in PROVENANCE.md and docs/DESIGN.md.
+
+Decision numbers (Dnn) and document names cited in the source refer to
+bbtree's design/03-decisions.md and design/*.md at that commit.
+
+The optimal search tree components (include/stx_btree/search_weights.hpp,
+optimal_tree.hpp) follow the weight conventions of "Core-Sparse Monge
+Construction for Full Optimal Binary Search Trees" by OpenAI Codex Sydney
+(problem selection and sponsorship: Joshuah Rainstar),
+https://github.com/falseywinchnet/papers_please (obst/), commit
+eef656fae6e6bf65fd19b5f74abc6081ad6e67f7. Earlier revisions of this
+repository (up to commit f8c72e5) also contained a rewrite of its MIT-licensed
+prototype obst/code/compact_obst.cpp (Copyright (c) 2026 ultimussaeculi);
+that code is no longer included.
+
+The packing dynamic program follows Gil and Itai, "How to pack trees"
+(J. Algorithms, 1999); Garsia-Wachs follows Garsia and Wachs (SIAM J.
+Computing, 1977).
