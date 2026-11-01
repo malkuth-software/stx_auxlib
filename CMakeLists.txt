@@ -130,7 +130,10 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     # The owned kernels' bit-identical results need floating-point
     # contraction off. It stays private: consumers keep fused arithmetic,
     # which is desirable outside the replaced calls (owner, 2026-10-31).
-    target_compile_options(stx_auxlib PRIVATE -ffp-contract=off -fno-fast-math)
+    # -fno-fast-math turns math-errno back on for GNU and MinGW targets, which
+    # leaves a C library call (to set errno) behind std::sqrt; the kernels
+    # never read errno.
+    target_compile_options(stx_auxlib PRIVATE -ffp-contract=off -fno-fast-math -fno-math-errno)
 elseif(MSVC)
     target_compile_options(stx_auxlib PRIVATE /W4 /fp:precise)
 endif()
@@ -299,7 +302,7 @@ if(STX_AUXLIB_TESTS)
         # The test's inlined double-double reference (tests/reference/wide.hpp)
         # needs contraction off too: contracted, its own self-check fails.
         if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-            target_compile_options(${math_test} PRIVATE -ffp-contract=off -fno-fast-math)
+            target_compile_options(${math_test} PRIVATE -ffp-contract=off -fno-fast-math -fno-math-errno)
         endif()
         add_test(NAME ${math_test} COMMAND ${math_test})
     endforeach()
