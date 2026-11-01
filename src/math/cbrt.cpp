@@ -146,7 +146,7 @@ double cbrt(const double x) noexcept {
 // 2^-48) when its float rounding is certain, otherwise the corrected
 // double-double.
 float cbrt(const float value) noexcept {
-    const double x = static_cast<double>(value);
+    const double x = detail::widen(value);
     if (x == 0.0 || !std::isfinite(x)) return value + value;
     std::int64_t k = 0;
     const double m = detail::cbrt_reduce(std::fabs(x), k);

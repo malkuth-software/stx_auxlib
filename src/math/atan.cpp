@@ -268,7 +268,7 @@ double atan(const double x) noexcept {
 }
 
 float atan(const float value) noexcept {
-    const double x = static_cast<double>(value);
+    const double x = detail::widen(value);
     if (x != x) return value + value;
     const double a = std::fabs(x);
     if (a < detail::atan_tiny_limit) return value;
@@ -300,8 +300,8 @@ double atan2(const double y, const double x) noexcept {
 // Float operands are exact doubles; specials and the direct cases (quotient,
 // pi, pi/2) are rounded to float from their exact or double-double values.
 float atan2(const float y, const float x) noexcept {
-    const double yd = static_cast<double>(y);
-    const double xd = static_cast<double>(x);
+    const double yd = detail::widen(y);
+    const double xd = detail::widen(x);
     const bool negative = std::signbit(yd);
     double special = 0.0;
     if (detail::atan2_special(yd, xd, special)) {
@@ -357,7 +357,7 @@ double asin(const double x) noexcept {
 }
 
 float asin(const float value) noexcept {
-    const double x = static_cast<double>(value);
+    const double x = detail::widen(value);
     if (x != x) return value + value;
     const double a = std::fabs(x);
     if (a > 1.0) return std::numeric_limits<float>::quiet_NaN();
@@ -403,7 +403,7 @@ double acos(const double x) noexcept {
 }
 
 float acos(const float value) noexcept {
-    const double x = static_cast<double>(value);
+    const double x = detail::widen(value);
     if (x != x) return value + value;
     if (std::fabs(x) > 1.0) return std::numeric_limits<float>::quiet_NaN();
     if (x == 1.0) return 0.0f;

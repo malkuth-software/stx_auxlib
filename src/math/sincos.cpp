@@ -33,7 +33,7 @@ double float_remainder(const double x, std::uint64_t& index) noexcept {
 // intermediate: the polynomials leave ~1e-17 of truncation error, far below
 // float rounding.
 void sincos(const float angle, float& s, float& c) noexcept {
-    const double x = static_cast<double>(angle);
+    const double x = detail::widen(angle);
     if (!detail::sincos_fast_path(x) && !detail::sincos_medium_path(x)) {
         if (std::fabs(x) < detail::sincos_tiny_limit) {
             s = angle;

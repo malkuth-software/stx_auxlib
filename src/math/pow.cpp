@@ -210,7 +210,7 @@ namespace {
 // also rounds float overflow and underflow correctly), out of line so the
 // cheap path's tail call needs no stack frame.
 STX_AUXLIB_MATH_COLD float pow_float_accurate(const float x, const float y) noexcept {
-    const double result = pow(static_cast<double>(x), static_cast<double>(y));
+    const double result = pow(detail::widen(x), detail::widen(y));
     return static_cast<float>(result);
 }
 
@@ -221,8 +221,8 @@ STX_AUXLIB_MATH_COLD float pow_float_accurate(const float x, const float y) noex
 // certified with float_if_certain; otherwise the double result rounded once
 // (pow_float_accurate).
 float pow(const float x, const float y) noexcept {
-    const double xd = static_cast<double>(x);
-    const double yd = static_cast<double>(y);
+    const double xd = detail::widen(x);
+    const double yd = detail::widen(y);
     const std::uint64_t x_bits = std::bit_cast<std::uint64_t>(xd);
     const std::uint64_t y_magnitude = std::bit_cast<std::uint64_t>(yd) & detail::magnitude_mask;
     if (detail::log_fast_path(x_bits) && y_magnitude != 0 && y_magnitude < detail::infinity_bits) {

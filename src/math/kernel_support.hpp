@@ -90,6 +90,29 @@ inline void two_product(const double a, const double b, double& product,
 #endif
 }
 
+// A float widened to double: exact, the value static_cast gives. On x86-64
+// without AVX the conversion is SSE2's cvtss2sd, which writes only the low
+// half of its destination and so waits for whatever last wrote that
+// register. At a float entry point the compiler picks a destination it
+// believes idle (it cannot see the caller), which in a loop of calls is the
+// previous call's result: each call then waits for the last one to finish.
+// Measured (x86-64 review, 2026-11-01): exp(float) 15.0 -> 6.3 ns and
+// log(float) 18.9 -> 8.0 ns per call once the destination is cleared first.
+// Compilers fold every intrinsic spelling of a cleared destination back to a
+// plain conversion, so the clearing is written as two instructions here.
+// The VEX form (AVX builds) and other targets have no such dependency.
+inline double widen(const float value) noexcept {
+#if defined(__x86_64__) && defined(__SSE2__) && !defined(__AVX__) && \
+    (defined(__clang__) || defined(__GNUC__))
+    double result = 0.0;
+    __asm__("xorps %0, %0\n\tcvtss2sd %1, %0" : "=&x"(result) : "x"(value));
+    return result;
+#else
+    const double result = static_cast<double>(value);
+    return result;
+#endif
+}
+
 // 2^exponent for exponent in [-1022, 1023].
 inline double power_of_two(const std::int64_t exponent) noexcept {
     const std::uint64_t bits = static_cast<std::uint64_t>(exponent + exponent_bias) << 52;

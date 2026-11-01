@@ -328,7 +328,7 @@ double sinh(const double x) noexcept {
 }
 
 float sinh(const float value) noexcept {
-    const double x = static_cast<double>(value);
+    const double x = detail::widen(value);
     if (x != x) return value + value;
     const double a = std::fabs(x);
     const bool negative = std::signbit(x);
@@ -361,7 +361,7 @@ double cosh(const double x) noexcept {
 }
 
 float cosh(const float value) noexcept {
-    const double x = static_cast<double>(value);
+    const double x = detail::widen(value);
     if (x != x) return value + value;
     const double a = std::fabs(x);
     if (a < detail::hyperbolic_tiny) return 1.0f;
@@ -425,7 +425,7 @@ double tanh(const double x) noexcept {
 }
 
 float tanh(const float value) noexcept {
-    const double x = static_cast<double>(value);
+    const double x = detail::widen(value);
     if (x != x) return value + value;
     const double a = std::fabs(x);
     const bool negative = std::signbit(x);
@@ -452,7 +452,7 @@ double asinh(const double x) noexcept {
 }
 
 float asinh(const float value) noexcept {
-    const double x = static_cast<double>(value);
+    const double x = detail::widen(value);
     if (x != x || std::isinf(x)) return value + value;
     const double a = std::fabs(x);
     const bool negative = std::signbit(x);
@@ -497,7 +497,7 @@ double acosh(const double x) noexcept {
 }
 
 float acosh(const float input) noexcept {
-    const double x = static_cast<double>(input);
+    const double x = detail::widen(input);
     if (x != x) return input + input;
     if (x < 1.0) return std::numeric_limits<float>::quiet_NaN();
     if (x == 1.0) return 0.0f;
@@ -534,7 +534,7 @@ double atanh(const double x) noexcept {
 }
 
 float atanh(const float value) noexcept {
-    const double x = static_cast<double>(value);
+    const double x = detail::widen(value);
     if (x != x) return value + value;
     const double a = std::fabs(x);
     const bool negative = std::signbit(x);
