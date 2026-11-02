@@ -67,10 +67,11 @@ endif()
 # The owned transcendental kernels (include/stx_auxlib/math.hpp), one
 # source and table header per family under src/math/. They are compiled with
 # the library's private -ffp-contract=off, which never reaches consumers.
-set(STX_AUXLIB_MATH_SOURCES
+# Each kernel source compiles once per variant (src/math/variant.hpp);
+# src/math/dispatch.cpp defines the public functions over them.
+set(STX_AUXLIB_MATH_KERNEL_SOURCES
     src/math/atan.cpp
     src/math/cbrt.cpp
-    src/math/constants.cpp
     src/math/exp.cpp
     src/math/hyperbolic.cpp
     src/math/hypot.cpp
@@ -78,8 +79,24 @@ set(STX_AUXLIB_MATH_SOURCES
     src/math/pow.cpp
     src/math/sincos.cpp
     src/math/tan.cpp)
+set(STX_AUXLIB_MATH_SOURCES
+    ${STX_AUXLIB_MATH_KERNEL_SOURCES}
+    src/math/constants.cpp
+    src/math/dispatch.cpp)
+# x86-64 builds with Clang or GCC carry two kernel variants, v128 (SSE2) and
+# avx2_fma, and call the one the process's SIMD level selects
+# (include/stx_auxlib/simd.hpp). Every other build has one native variant.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|x86_64|amd64)$" AND
+   CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    set(STX_AUXLIB_MATH_DISPATCH_DEFAULT ON)
+else()
+    set(STX_AUXLIB_MATH_DISPATCH_DEFAULT OFF)
+endif()
+option(STX_AUXLIB_MATH_DISPATCH "Build the x86-64 v128 and avx2_fma math variants and select at run time"
+    ${STX_AUXLIB_MATH_DISPATCH_DEFAULT})
 add_library(stx_auxlib STATIC
     ${STX_AUXLIB_MATH_SOURCES}
+    src/simd.cpp
     src/calendar.cpp
     src/hash.cpp
     src/paths.cpp
@@ -130,9 +147,32 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     # The owned kernels' bit-identical results need floating-point
     # contraction off. It stays private: consumers keep fused arithmetic,
     # which is desirable outside the replaced calls (owner, 2026-10-31).
-    target_compile_options(stx_auxlib PRIVATE -ffp-contract=off -fno-fast-math)
+    # -fno-fast-math turns math-errno back on for GNU and MinGW targets, which
+    # leaves a C library call (to set errno) behind std::sqrt; the kernels
+    # never read errno.
+    target_compile_options(stx_auxlib PRIVATE -ffp-contract=off -fno-fast-math -fno-math-errno)
 elseif(MSVC)
     target_compile_options(stx_auxlib PRIVATE /W4 /fp:precise)
+endif()
+if(STX_AUXLIB_MATH_DISPATCH)
+    target_compile_definitions(stx_auxlib PRIVATE
+        STX_AUXLIB_MATH_VARIANT=v128 STX_AUXLIB_MATH_DISPATCH_X86=1)
+    # The avx2_fma variant: the same kernel sources and private options, its
+    # own namespace; variant.hpp applies the avx2,fma target to its
+    # definitions only, so no command-line -mavx2 reaches shared inline code.
+    add_library(stx_auxlib_math_avx2_fma OBJECT ${STX_AUXLIB_MATH_KERNEL_SOURCES})
+    set_target_properties(stx_auxlib_math_avx2_fma PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_compile_features(stx_auxlib_math_avx2_fma PRIVATE cxx_std_20)
+    target_include_directories(stx_auxlib_math_avx2_fma PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(stx_auxlib_math_avx2_fma PRIVATE
+        STX_AUXLIB_MATH_VARIANT=avx2_fma STX_AUXLIB_MATH_AVX2_FMA=1)
+    target_compile_options(stx_auxlib_math_avx2_fma PRIVATE
+        -Wall -Wextra -Wpedantic -Wconversion -Wshadow
+        -ffp-contract=off -fno-fast-math -fno-math-errno)
+    target_sources(stx_auxlib PRIVATE $<TARGET_OBJECTS:stx_auxlib_math_avx2_fma>)
+else()
+    target_compile_definitions(stx_auxlib PRIVATE STX_AUXLIB_MATH_VARIANT=native)
 endif()
 option(STX_AUXLIB_BUILD_TOOLS "Build stx_auxlib's table generators" OFF)
 
@@ -292,17 +332,30 @@ if(STX_AUXLIB_TESTS)
     # stay out of ctest.
     add_executable(stx_auxlib_math_tests tests/math_tests.cpp)
     add_executable(stx_auxlib_math_dekker_tests tests/math_tests.cpp ${STX_AUXLIB_MATH_SOURCES})
-    target_compile_definitions(stx_auxlib_math_dekker_tests PRIVATE STX_AUXLIB_MATH_DEKKER)
+    target_compile_definitions(stx_auxlib_math_dekker_tests PRIVATE
+        STX_AUXLIB_MATH_DEKKER STX_AUXLIB_MATH_VARIANT=native)
     foreach(math_test IN ITEMS stx_auxlib_math_tests stx_auxlib_math_dekker_tests)
         target_link_libraries(${math_test} PRIVATE stx_auxlib::global_allocator)
         target_include_directories(${math_test} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
         # The test's inlined double-double reference (tests/reference/wide.hpp)
         # needs contraction off too: contracted, its own self-check fails.
         if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-            target_compile_options(${math_test} PRIVATE -ffp-contract=off -fno-fast-math)
+            target_compile_options(${math_test} PRIVATE -ffp-contract=off -fno-fast-math -fno-math-errno)
         endif()
         add_test(NAME ${math_test} COMMAND ${math_test})
     endforeach()
+    # Every variant on this machine: the forced levels run the same frozen
+    # hashes through v128 and, where the CPU has it, avx2_fma.
+    if(STX_AUXLIB_MATH_DISPATCH)
+        foreach(level IN ITEMS scalar vector128 avx2_fma)
+            add_test(NAME stx_auxlib_math_tests_${level} COMMAND stx_auxlib_math_tests)
+            set_tests_properties(stx_auxlib_math_tests_${level} PROPERTIES
+                ENVIRONMENT "STX_SIMD_LEVEL=${level}")
+        endforeach()
+    endif()
+    add_executable(stx_auxlib_simd_tests tests/simd_tests.cpp)
+    target_link_libraries(stx_auxlib_simd_tests PRIVATE stx_auxlib::global_allocator)
+    add_test(NAME stx_auxlib_simd_tests COMMAND stx_auxlib_simd_tests)
 
     add_executable(stx_auxlib_thread_pool_tests tests/thread_pool_tests.cpp)
     target_link_libraries(stx_auxlib_thread_pool_tests PRIVATE stx_auxlib::global_allocator)

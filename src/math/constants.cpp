@@ -10,6 +10,10 @@
 
 namespace stx_auxlib::math::detail {
 
+// The constexpr originals, as this translation unit's variant compiled them
+// (the values are the same in every variant).
+using namespace ::stx_auxlib::math::STX_AUXLIB_MATH_VARIANT::detail;
+
 alignas(64) extern const KernelConstants kernel_constants = {
     rounding_shift,
     sincos_inverse_step,

@@ -17,7 +17,11 @@
 
 #include <limits>
 
-namespace stx_auxlib::math {
+#include "variant_functions.hpp"
+
+STX_AUXLIB_MATH_TARGET_PUSH
+
+namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT {
 
 namespace detail {
 namespace {
@@ -117,6 +121,11 @@ float signed_float(const Wide value, const bool negative) noexcept {
 // Ratios below 2^-60 make atan2 the quotient itself (or pi, pi/2 next to it):
 // atan r = r (1 - r^2/3 + ...) rounds to r.
 constexpr double atan2_negligible_ratio = 0x1p-60;
+// atan2_finite's exact pre-scaling of operands far from 1 (see there).
+constexpr double atan2_far_above = 0x1p900;
+constexpr double atan2_far_below = 0x1p-900;
+constexpr double atan2_far_step_down = 0x1p-600;
+constexpr double atan2_far_step_up = 0x1p600;
 
 // atan2 for finite, nonzero x and y, as the signed angle in double-double,
 // or `direct` when the quotient or a constant is already the rounded result.
@@ -138,12 +147,31 @@ bool atan2_finite(const double y, const double x, Wide& angle, double& direct) n
         return true;
     }
     // Scale both by the larger's exponent, which puts the larger in [0.5, 1)
-    // and keeps the smaller above 2^-61: ldexp is exact for both (a single
-    // scale factor 2^-exponent could itself overflow for subnormal inputs).
-    int exponent = 0;
-    (void)std::frexp(std::fmax(ax, ay), &exponent);
-    const Wide sx{std::ldexp(ax, -exponent), 0.0};
-    const Wide sy{std::ldexp(ay, -exponent), 0.0};
+    // and keeps the smaller above 2^-61 (the ratio is at least 2^-60 here),
+    // so both products are exact. The exponent is read from the larger's
+    // bits once it is a normal double within 2^+-900; outside that, both are
+    // first moved 600 octaves toward 1, exactly (the smaller stays normal or
+    // only grows), so 2^-exponent is itself a normal double. The libm frexp
+    // and two ldexp calls this replaces cost more than the rest of the
+    // reduction (x86-64 review, 2026-11-01); the scaled values are the same.
+    double larger = std::fmax(ax, ay);
+    double scaled_x = ax;
+    double scaled_y = ay;
+    if (larger > atan2_far_above) {
+        larger *= atan2_far_step_down;
+        scaled_x *= atan2_far_step_down;
+        scaled_y *= atan2_far_step_down;
+    } else if (larger < atan2_far_below) {
+        larger *= atan2_far_step_up;
+        scaled_x *= atan2_far_step_up;
+        scaled_y *= atan2_far_step_up;
+    }
+    // larger is in [2^(exponent - 1), 2^exponent).
+    const std::int64_t exponent =
+        static_cast<std::int64_t>(std::bit_cast<std::uint64_t>(larger) >> 52) - (exponent_bias - 1);
+    const double scale = power_of_two(-exponent);
+    const Wide sx{scaled_x * scale, 0.0};
+    const Wide sy{scaled_y * scale, 0.0};
     Wide result = first_quadrant_angle(sx, sy);
     if (x < 0.0) result = pi_minus(result);
     if (negative) result = Wide{-result.hi, -result.lo};
@@ -268,7 +296,7 @@ double atan(const double x) noexcept {
 }
 
 float atan(const float value) noexcept {
-    const double x = static_cast<double>(value);
+    const double x = detail::widen(value);
     if (x != x) return value + value;
     const double a = std::fabs(x);
     if (a < detail::atan_tiny_limit) return value;
@@ -300,8 +328,8 @@ double atan2(const double y, const double x) noexcept {
 // Float operands are exact doubles; specials and the direct cases (quotient,
 // pi, pi/2) are rounded to float from their exact or double-double values.
 float atan2(const float y, const float x) noexcept {
-    const double yd = static_cast<double>(y);
-    const double xd = static_cast<double>(x);
+    const double yd = detail::widen(y);
+    const double xd = detail::widen(x);
     const bool negative = std::signbit(yd);
     double special = 0.0;
     if (detail::atan2_special(yd, xd, special)) {
@@ -357,7 +385,7 @@ double asin(const double x) noexcept {
 }
 
 float asin(const float value) noexcept {
-    const double x = static_cast<double>(value);
+    const double x = detail::widen(value);
     if (x != x) return value + value;
     const double a = std::fabs(x);
     if (a > 1.0) return std::numeric_limits<float>::quiet_NaN();
@@ -403,7 +431,7 @@ double acos(const double x) noexcept {
 }
 
 float acos(const float value) noexcept {
-    const double x = static_cast<double>(value);
+    const double x = detail::widen(value);
     if (x != x) return value + value;
     if (std::fabs(x) > 1.0) return std::numeric_limits<float>::quiet_NaN();
     if (x == 1.0) return 0.0f;
@@ -420,4 +448,6 @@ float acos(const float value) noexcept {
     return result;
 }
 
-} // namespace stx_auxlib::math
+} // namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT
+
+STX_AUXLIB_MATH_TARGET_POP

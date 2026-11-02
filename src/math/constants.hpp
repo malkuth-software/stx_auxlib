@@ -46,6 +46,13 @@ struct KernelConstants final {
     double log_bases[12];
 };
 
+// Hidden: internal to the library, so references are direct. With default
+// visibility, MinGW targets read the object's address through a .refptr
+// pointer first, one extra load on every call (x86-64 review, 2026-11-01).
+#if defined(__GNUC__) || defined(__clang__)
+extern const KernelConstants kernel_constants __attribute__((visibility("hidden")));
+#else
 extern const KernelConstants kernel_constants;
+#endif
 
 } // namespace stx_auxlib::math::detail

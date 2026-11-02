@@ -11,7 +11,9 @@
 #include "constants.hpp"
 #include "kernel_support.hpp"
 
-namespace stx_auxlib::math::detail {
+STX_AUXLIB_MATH_TARGET_PUSH
+
+namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT::detail {
 
 inline constexpr double exp_inverse_step = 0x1.71547652b82fep+8;  // 256/ln2, rounded
 // 708 keeps k in [-1022, 1021], so 2^k and the result are normal doubles.
@@ -28,6 +30,20 @@ inline constexpr double exp_3 = 1.0 / 6.0;
 inline constexpr double exp_4 = 1.0 / 24.0;
 inline constexpr double exp_5 = 1.0 / 120.0;
 inline constexpr double exp_6 = 1.0 / 720.0;
+
+// The table heads split for Dekker's product, built at compile time: the
+// multiply-and-add build then splits only r (two_product_split).
+struct ExpSplits final {
+    Split values[256];
+};
+
+constexpr ExpSplits make_exp_splits() noexcept {
+    ExpSplits table{};
+    for (int i = 0; i < 256; ++i) table.values[i] = veltkamp_split(exp_table_256[i].hi);
+    return table;
+}
+
+alignas(64) inline constexpr ExpSplits exp_splits = make_exp_splits();
 
 // True when |x| <= exp_fast_limit, false for NaN.
 inline bool exp_fast_path(const double x) noexcept {
@@ -80,7 +96,7 @@ inline void exp_core(const double x, const double x_lo, double& head, double& ta
 
     double rotation = 0.0;
     double rotation_error = 0.0;
-    two_product(entry.hi, r, rotation, rotation_error);
+    two_product_split(entry.hi, exp_splits.values[index], r, rotation, rotation_error);
     double head_error = 0.0;
     fast_two_sum(entry.hi, rotation, head, head_error);  // |T| >= 1 > |T r|
     const double small = entry.hi * (polynomial_tail + r_lo) + (entry.lo + entry.lo * r);
@@ -158,4 +174,6 @@ inline double exp_cheap(const double x) noexcept {
     return result;
 }
 
-} // namespace stx_auxlib::math::detail
+} // namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT::detail
+
+STX_AUXLIB_MATH_TARGET_POP

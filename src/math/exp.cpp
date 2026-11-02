@@ -7,12 +7,16 @@
 
 #include <limits>
 
-namespace stx_auxlib::math {
+#include "variant_functions.hpp"
+
+STX_AUXLIB_MATH_TARGET_PUSH
+
+namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT {
 
 // e^x for a float (contract in stx_auxlib/math.hpp): computed in double and
 // rounded once to float, so float overflow and underflow round correctly.
 float exp(const float value) noexcept {
-    const double x = static_cast<double>(value);
+    const double x = detail::widen(value);
     if (!detail::exp_fast_path(x)) {
         // Beyond |x| = 708 every float result is infinity or zero.
         if (x != x) return value + value;
@@ -55,4 +59,6 @@ double exp(const double x) noexcept {
     return result;
 }
 
-} // namespace stx_auxlib::math
+} // namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT
+
+STX_AUXLIB_MATH_TARGET_POP

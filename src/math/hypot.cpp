@@ -12,7 +12,11 @@
 
 #include <limits>
 
-namespace stx_auxlib::math {
+#include "variant_functions.hpp"
+
+STX_AUXLIB_MATH_TARGET_PUSH
+
+namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT {
 
 namespace detail {
 namespace {
@@ -166,8 +170,8 @@ double hypot(const double x, const double y) noexcept {
 // double first could round twice). In the float range (r + r_lo) * 2^e
 // scales exactly into normal doubles.
 float hypot(const float x, const float y) noexcept {
-    const double xd = static_cast<double>(x);
-    const double yd = static_cast<double>(y);
+    const double xd = detail::widen(x);
+    const double yd = detail::widen(y);
     if (std::isinf(xd) || std::isinf(yd)) return std::numeric_limits<float>::infinity();
     if (xd != xd || yd != yd) return x + y;
     const double a = std::fmax(std::fabs(xd), std::fabs(yd));
@@ -192,4 +196,6 @@ float hypot(const float x, const float y) noexcept {
     return result;
 }
 
-} // namespace stx_auxlib::math
+} // namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT
+
+STX_AUXLIB_MATH_TARGET_POP

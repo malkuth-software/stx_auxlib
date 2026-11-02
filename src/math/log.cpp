@@ -7,7 +7,11 @@
 
 #include <limits>
 
-namespace stx_auxlib::math {
+#include "variant_functions.hpp"
+
+STX_AUXLIB_MATH_TARGET_PUSH
+
+namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT {
 
 namespace detail {
 namespace {
@@ -50,13 +54,13 @@ double log_any(const double x) noexcept {
 // checked correctly rounded), out of line for the fast path's tail call.
 template <const LogBase& base>
 STX_AUXLIB_MATH_COLD float log_float_accurate(const float x) noexcept {
-    const double result = log_any<base>(static_cast<double>(x));
+    const double result = log_any<base>(detail::widen(x));
     return static_cast<float>(result);
 }
 
 template <const LogBase& base>
 float log_any(const float x) noexcept {
-    const std::uint64_t bits = std::bit_cast<std::uint64_t>(static_cast<double>(x));
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(detail::widen(x));
     if (log_fast_path(bits)) {
         double value = 0.0;
         double error = 0.0;
@@ -101,4 +105,6 @@ float log10(const float x) noexcept {
     return result;
 }
 
-} // namespace stx_auxlib::math
+} // namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT
+
+STX_AUXLIB_MATH_TARGET_POP

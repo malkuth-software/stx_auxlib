@@ -10,6 +10,8 @@
 #pragma STDC FP_CONTRACT OFF
 #endif
 
+#include "variant.hpp"
+
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -24,7 +26,16 @@
 #define STX_AUXLIB_MATH_COLD
 #endif
 
+// The tables (generated, *_table*.hpp) and kernel_constants are data,
+// shared by every variant in stx_auxlib::math::detail.
 namespace stx_auxlib::math::detail {
+}
+
+STX_AUXLIB_MATH_TARGET_PUSH
+
+namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT::detail {
+
+using namespace ::stx_auxlib::math::detail;
 
 constexpr std::uint64_t magnitude_mask = 0x7fffffffffffffffULL;
 // x + rounding_shift - rounding_shift rounds x to an integer for |x| < 2^51,
@@ -59,9 +70,8 @@ inline void fast_two_sum(const double a, const double b, double& sum, double& er
 // selects the multiply-and-add form, so the Dekker test build checks that
 // both produce the same bits.
 inline double multiply_add(const double a, const double b, const double c) noexcept {
-#if !defined(STX_AUXLIB_MATH_DEKKER) && \
-    (defined(__FP_FAST_FMA) || defined(__ARM_FEATURE_FMA) || defined(__FMA__))
-    const double result = std::fma(a, b, c);
+#if defined(STX_AUXLIB_MATH_FMA)
+    const double result = __builtin_fma(a, b, c);
 #else
     const double result = a * b + c;
 #endif
@@ -74,9 +84,8 @@ inline double multiply_add(const double a, const double b, const double c) noexc
 inline void two_product(const double a, const double b, double& product,
                                         double& error) noexcept {
     product = a * b;
-#if !defined(STX_AUXLIB_MATH_DEKKER) && \
-    (defined(__FP_FAST_FMA) || defined(__ARM_FEATURE_FMA) || defined(__FMA__))
-    error = std::fma(a, b, -product);
+#if defined(STX_AUXLIB_MATH_FMA)
+    error = __builtin_fma(a, b, -product);
 #else
     // Veltkamp split into 26-bit halves.
     constexpr double split = 134217729.0;  // 2^27 + 1
@@ -87,6 +96,68 @@ inline void two_product(const double a, const double b, double& product,
     const double b_hi = b_scaled - (b_scaled - b);
     const double b_lo = b - b_hi;
     error = ((a_hi * b_hi - product) + a_hi * b_lo + a_lo * b_hi) + a_lo * b_lo;
+#endif
+}
+
+// A float widened to double: exact, the value static_cast gives. On x86-64
+// without AVX the conversion is SSE2's cvtss2sd, which writes only the low
+// half of its destination and so waits for whatever last wrote that
+// register. At a float entry point the compiler picks a destination it
+// believes idle (it cannot see the caller), which in a loop of calls is the
+// previous call's result: each call then waits for the last one to finish.
+// Measured (x86-64 review, 2026-11-01): exp(float) 15.0 -> 6.3 ns and
+// log(float) 18.9 -> 8.0 ns per call once the destination is cleared first.
+// Compilers fold every intrinsic spelling of a cleared destination back to a
+// plain conversion, so the clearing is written as two instructions here.
+// The VEX form (AVX builds) and other targets have no such dependency.
+inline double widen(const float value) noexcept {
+#if defined(__x86_64__) && !defined(STX_AUXLIB_MATH_VEX) && \
+    (defined(__clang__) || defined(__GNUC__))
+    double result = 0.0;
+    __asm__("xorps %0, %0\n\tcvtss2sd %1, %0" : "=&x"(result) : "x"(value));
+    return result;
+#elif defined(__x86_64__) && (defined(__clang__) || defined(__GNUC__))
+    // VEX: vcvtss2sd takes its upper half from its first source, so that
+    // source is the cleared destination too.
+    double result = 0.0;
+    __asm__("vxorps %0, %0, %0\n\tvcvtss2sd %1, %0, %0" : "=&x"(result) : "x"(value));
+    return result;
+#else
+    const double result = static_cast<double>(value);
+    return result;
+#endif
+}
+
+// A double split into two halves of at most 26 significant bits (Veltkamp),
+// hi + lo == a exactly: the split Dekker's product makes of each factor.
+struct Split final {
+    double hi{0.0};
+    double lo{0.0};
+};
+
+// Requires |a| <= 2^995. constexpr so that tables of split constants are
+// built at compile time; constant evaluation rounds as the run time does.
+constexpr Split veltkamp_split(const double a) noexcept {
+    constexpr double split = 134217729.0;  // 2^27 + 1
+    const double a_scaled = split * a;
+    const double a_hi = a_scaled - (a_scaled - a);
+    const Split result{a_hi, a - a_hi};
+    return result;
+}
+
+// two_product with the first factor's split supplied (a table constant split
+// at compile time): Dekker's form then splits only b. Same bits as
+// two_product(a, b, ...); the fused form ignores the split.
+inline void two_product_split(const double a, const Split& a_parts, const double b,
+                              double& product, double& error) noexcept {
+    product = a * b;
+#if defined(STX_AUXLIB_MATH_FMA)
+    (void)a_parts;
+    error = __builtin_fma(a, b, -product);
+#else
+    const Split b_parts = veltkamp_split(b);
+    error = ((a_parts.hi * b_parts.hi - product) + a_parts.hi * b_parts.lo + a_parts.lo * b_parts.hi) +
+            a_parts.lo * b_parts.lo;
 #endif
 }
 
@@ -215,4 +286,6 @@ inline double scale_wide(const double head, const double tail, const std::int64_
     return result;
 }
 
-} // namespace stx_auxlib::math::detail
+} // namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT::detail
+
+STX_AUXLIB_MATH_TARGET_POP

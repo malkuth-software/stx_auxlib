@@ -16,7 +16,9 @@
 #include "kernel_support.hpp"
 #include "log_table128.hpp"
 
-namespace stx_auxlib::math::detail {
+STX_AUXLIB_MATH_TARGET_PUSH
+
+namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT::detail {
 
 inline constexpr std::uint64_t smallest_normal_bits = 0x0010000000000000ULL;
 inline constexpr std::uint64_t infinity_bits = 0x7ff0000000000000ULL;
@@ -30,6 +32,20 @@ inline constexpr double log_5 = 1.0 / 5.0;
 inline constexpr double log_6 = -1.0 / 6.0;
 inline constexpr double log_7 = 1.0 / 7.0;
 inline constexpr double log_8 = -1.0 / 8.0;
+
+// The buckets' inverses split for Dekker's product, built at compile time
+// (two_product_split).
+struct LogSplits final {
+    Split values[128];
+};
+
+constexpr LogSplits make_log_splits() noexcept {
+    LogSplits table{};
+    for (int i = 0; i < 128; ++i) table.values[i] = veltkamp_split(log_table_128[i].inv);
+    return table;
+}
+
+alignas(64) inline constexpr LogSplits log_splits = make_log_splits();
 
 // True for positive normal finite x (false for zero, subnormals, negatives,
 // infinities and NaN).
@@ -56,7 +72,7 @@ STX_AUXLIB_MODULAR inline void log_z(const std::uint64_t bits, const double expo
     const LogEntry& entry = log_table_128[index];
     double product = 0.0;
     double r_lo = 0.0;
-    two_product(z, entry.inv, product, r_lo);
+    two_product_split(entry.inv, log_splits.values[index], z, product, r_lo);
     const double r = product - 1.0;  // exact: product is within 2^-7 of 1
     // log1p(r + r_lo) = r - r^2/2 + [r^3 * polynomial(r) + r_lo / (1 + r)].
     // r^2/2 can reach 0.4% of the result, so it is formed exactly; the
@@ -205,7 +221,7 @@ STX_AUXLIB_MODULAR inline void log_natural_wide(const std::uint64_t bits, const 
     const LogEntry& entry = log_table_128[index];
     double product = 0.0;
     double r_lo = 0.0;
-    two_product(z, entry.inv, product, r_lo);
+    two_product_split(entry.inv, log_splits.values[index], z, product, r_lo);
     const double r = product - 1.0;  // exact
     double r_squared = 0.0;
     double r_squared_error = 0.0;
@@ -248,4 +264,6 @@ STX_AUXLIB_MODULAR inline void log_natural_wide(const std::uint64_t bits, const 
     tail = ((sum_error + sum2_error) + (logz_error + head_error)) + (small + k * kernel_constants.log_ln2_lo);
 }
 
-} // namespace stx_auxlib::math::detail
+} // namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT::detail
+
+STX_AUXLIB_MATH_TARGET_POP
