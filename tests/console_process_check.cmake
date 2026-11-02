@@ -13,11 +13,14 @@ function(expect_equal actual expected what)
     endif()
 endfunction()
 
+# Every child writes UTF-8; ENCODING UTF8 keeps CMake on Windows from
+# decoding its output in the console code page.
+
 # write: order with printf kept, UTF-8 intact, invalid text refused, both
 # streams separate. (CMake strings have no \x escapes, so the expected UTF-8
 # is written literally; this file is UTF-8.)
 execute_process(COMMAND "${PROGRAM}" write
-    RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+    ENCODING UTF8 RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
 expect_equal("${result}" "0" "write exit status")
 string(CONCAT expected_output
     "from printf\n"
@@ -31,10 +34,10 @@ expect_equal("${error}" "to stderr\n" "write error stream")
 # read: CRLF and LF stripped, an over-limit line refused and skipped,
 # invalid UTF-8 refused, a line of exactly the limit kept, a last line
 # without an ending returned, then the end.
-execute_process(COMMAND "${PROGRAM}" prepare "${WORK}/input.txt" RESULT_VARIABLE result)
+execute_process(COMMAND "${PROGRAM}" prepare "${WORK}/input.txt" ENCODING UTF8 RESULT_VARIABLE result)
 expect_equal("${result}" "0" "prepare exit status")
 execute_process(COMMAND "${PROGRAM}" read INPUT_FILE "${WORK}/input.txt"
-    RESULT_VARIABLE result OUTPUT_VARIABLE output)
+    ENCODING UTF8 RESULT_VARIABLE result OUTPUT_VARIABLE output)
 expect_equal("${result}" "0" "read exit status")
 string(CONCAT expected_output
     "ok first\n"
@@ -48,7 +51,7 @@ expect_equal("${output}" "${expected_output}" "read output")
 
 # exit: tasks run newest first, a task may register another, and the
 # status is the one given.
-execute_process(COMMAND "${PROGRAM}" exit RESULT_VARIABLE result OUTPUT_VARIABLE output)
+execute_process(COMMAND "${PROGRAM}" exit ENCODING UTF8 RESULT_VARIABLE result OUTPUT_VARIABLE output)
 expect_equal("${result}" "7" "exit status")
 string(CONCAT expected_output
     "null task refused\n"
@@ -60,7 +63,7 @@ expect_equal("${output}" "${expected_output}" "exit task order")
 # fail: one report line naming the location, then an abnormal end; nothing
 # after the fault runs.
 execute_process(COMMAND "${PROGRAM}" fail
-    RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+    ENCODING UTF8 RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
 if("${result}" STREQUAL "0")
     message(FATAL_ERROR "fail ended normally")
 endif()

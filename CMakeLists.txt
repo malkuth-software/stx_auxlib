@@ -416,7 +416,11 @@ if(STX_AUXLIB_TESTS)
         endif()
         add_test(NAME ${conformance} COMMAND ${conformance})
         # A hang detector: a broken claim or lock deadlocks rather than fails.
-        set_tests_properties(${conformance} PROPERTIES TIMEOUT 60)
+        # RUN_SERIAL: each of its ~400 batches waits on two condition-variable
+        # wakes, so beside other tests on every core it is bound by scheduler
+        # latency (measured on an 8-vCPU Windows VM with 8 busy threads:
+        # reuse_and_lifetime 88 ms alone, 15 s contended), not by the pool.
+        set_tests_properties(${conformance} PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
     endforeach()
 endif()
 

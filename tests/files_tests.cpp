@@ -259,13 +259,23 @@ void metadata_and_directories(const Scratch& scratch) {
     require(nothing.succeeded() && *nothing.value() == 0, "remove_tree of nothing failed");
 }
 
-void links_and_resolution(const Scratch& scratch) {
-    const stx_auxlib::Path target = under(scratch.root, "target.txt");
-    require_status(stx_auxlib::write_file(target, bytes_of("t")), stx_auxlib::FileStatus::ok,
-                   "write failed");
-    const stx_auxlib::Path link = under(scratch.root, "link");
-    require_status(stx_auxlib::create_link(*stx_auxlib::Path::parse("target.txt").path(), link),
-                   stx_auxlib::FileStatus::ok, "create_link failed");
+// Creates `link` naming "target.txt". True when created; false when the
+// host restricts links (Windows without developer mode or the symbolic link
+// privilege reports permission_denied, as files.hpp states).
+bool created_link(const stx_auxlib::Path& link) {
+    const stx_auxlib::FileStatus status =
+        stx_auxlib::create_link(*stx_auxlib::Path::parse("target.txt").path(), link);
+#if defined(_WIN32)
+    if (status == stx_auxlib::FileStatus::permission_denied) {
+        std::puts("links: skipped (this host restricts symbolic links)");
+        return false;
+    }
+#endif
+    require_status(status, stx_auxlib::FileStatus::ok, "create_link failed");
+    return true;
+}
+
+void link_checks(const stx_auxlib::Path& target, const stx_auxlib::Path& link) {
     const stx_auxlib::FileValue<stx_auxlib::Path> named = stx_auxlib::read_link(link);
     require(named.succeeded() && (*named.value()).text() == "target.txt", "read_link is wrong");
     const stx_auxlib::FileValue<stx_auxlib::FileInformation> itself =
@@ -281,6 +291,14 @@ void links_and_resolution(const Scratch& scratch) {
     require(resolved.succeeded() && resolved_target.succeeded() &&
                 *resolved.value() == *resolved_target.value(),
             "resolve did not follow the link");
+}
+
+void links_and_resolution(const Scratch& scratch) {
+    const stx_auxlib::Path target = under(scratch.root, "target.txt");
+    require_status(stx_auxlib::write_file(target, bytes_of("t")), stx_auxlib::FileStatus::ok,
+                   "write failed");
+    const stx_auxlib::Path link = under(scratch.root, "link");
+    if (created_link(link)) link_checks(target, link);
 
     const stx_auxlib::FileValue<stx_auxlib::Path> working = stx_auxlib::working_directory();
     require(working.succeeded() && (*working.value()).is_absolute(), "no working directory");
