@@ -26,6 +26,16 @@
 #define STX_AUXLIB_MATH_COLD
 #endif
 
+// Keeps a large hot helper out of line where inlining it into its one caller
+// costs more than the call: pow's log_natural_wide, inlined, left
+// pow_positive with more live values than registers (measured on Zen 4: the
+// avx2_fma pow double at 45-51 ns inlined, 25-35 ns called).
+#if defined(__GNUC__) || defined(__clang__)
+#define STX_AUXLIB_MATH_OUTLINE __attribute__((noinline))
+#else
+#define STX_AUXLIB_MATH_OUTLINE
+#endif
+
 // The tables (generated, *_table*.hpp) and kernel_constants are data,
 // shared by every variant in stx_auxlib::math::detail.
 namespace stx_auxlib::math::detail {

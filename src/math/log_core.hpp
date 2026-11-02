@@ -211,7 +211,7 @@ inline constexpr double one_third_lo = 0x1.5555555555555p-56;
 // Modular by design: offset = bits - log_offset_bits wraps (as unsigned
 // 64-bit arithmetic) for z below the table's base, and its arithmetic shift
 // then yields k < 0; bits - (offset & exponent_field) undoes it modulo 2^64.
-STX_AUXLIB_MODULAR inline void log_natural_wide(const std::uint64_t bits, const double exponent_adjust, double& head,
+STX_AUXLIB_MODULAR STX_AUXLIB_MATH_OUTLINE inline void log_natural_wide(const std::uint64_t bits, const double exponent_adjust, double& head,
                              double& tail) noexcept {
     const std::uint64_t offset = bits - log_offset_bits;
     const std::uint64_t index = (offset >> 45) & log_index_mask;
