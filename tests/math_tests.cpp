@@ -776,9 +776,24 @@ wide::ScaledWide pow_reference(const double x, const double y) {
     return result;
 }
 
-// Annex F: every combination of special x and y gives the C library's
-// result bit for bit (the host library follows Annex F; the values are
-// exact zeros, infinities, ones and NaN, so rounding plays no part).
+// A recorded special case of a two-argument function: indices into the
+// check's input arrays and the expected result's bits.
+struct BinarySpecial final {
+    std::size_t first_index{0};
+    std::size_t second_index{0};
+    std::uint64_t expected_bits{0};
+};
+
+struct BinarySpecialFloat final {
+    std::size_t first_index{0};
+    std::size_t second_index{0};
+    std::uint32_t expected_bits{0};
+};
+
+// Annex F: every combination of special x and y gives its recorded result
+// (exact zeros, infinities, ones and NaN, so rounding plays no part). The
+// results are recorded rather than taken from the host C library, so the
+// check is the same on every host; any NaN matches a recorded NaN.
 void pow_special_values() {
     const double infinity = std::numeric_limits<double>::infinity();
     const double nan = std::numeric_limits<double>::quiet_NaN();
@@ -786,24 +801,200 @@ void pow_special_values() {
                          0x1p-1074, -0x1p-1074, 0x1.fffffffffffffp1023, -3.0};
     const double ys[] = {0.0, -0.0, 1.0, -1.0, 2.0, -2.0, 3.0, -3.0, 0.5, -0.5, infinity,
                          -infinity, nan, 0x1p53, -0x1p53, 0x1.0000000000001p52, 1.5};
-    for (const double x : xs) {
-        for (const double y : ys) {
-            const double owned = stx_auxlib::math::pow(x, y);
-            const double library = std::pow(x, y);
-            const bool special = !std::isfinite(library) || library == 0.0 || library == 1.0 ||
-                                 library == -1.0 || x == 0.0 || !std::isfinite(x) ||
-                                 !std::isfinite(y) || y == 0.0;
-            if (!special) continue;
-            require(same_bits(owned, library), "pow(double): special input differs from Annex F");
-            const float xf = static_cast<float>(x);
-            const float yf = static_cast<float>(y);
-            const float owned_float = stx_auxlib::math::pow(xf, yf);
-            const float library_float = std::pow(xf, yf);
-            if (std::isfinite(library_float) && library_float != 0.0f && std::fabs(library_float) != 1.0f)
-                continue;
-            require(same_bits(owned_float, library_float),
-                    "pow(float): special input differs from Annex F");
-        }
+    // {xs index, ys index, result bits}
+    const BinarySpecial recorded[] = {
+        {0, 0, 0x3ff0000000000000ULL}, {0, 1, 0x3ff0000000000000ULL},
+        {0, 2, 0x0000000000000000ULL}, {0, 3, 0x7ff0000000000000ULL},
+        {0, 4, 0x0000000000000000ULL}, {0, 5, 0x7ff0000000000000ULL},
+        {0, 6, 0x0000000000000000ULL}, {0, 7, 0x7ff0000000000000ULL},
+        {0, 8, 0x0000000000000000ULL}, {0, 9, 0x7ff0000000000000ULL},
+        {0, 10, 0x0000000000000000ULL}, {0, 11, 0x7ff0000000000000ULL},
+        {0, 12, 0x7ff8000000000000ULL}, {0, 13, 0x0000000000000000ULL},
+        {0, 14, 0x7ff0000000000000ULL}, {0, 15, 0x0000000000000000ULL},
+        {0, 16, 0x0000000000000000ULL}, {1, 0, 0x3ff0000000000000ULL},
+        {1, 1, 0x3ff0000000000000ULL}, {1, 2, 0x8000000000000000ULL},
+        {1, 3, 0xfff0000000000000ULL}, {1, 4, 0x0000000000000000ULL},
+        {1, 5, 0x7ff0000000000000ULL}, {1, 6, 0x8000000000000000ULL},
+        {1, 7, 0xfff0000000000000ULL}, {1, 8, 0x0000000000000000ULL},
+        {1, 9, 0x7ff0000000000000ULL}, {1, 10, 0x0000000000000000ULL},
+        {1, 11, 0x7ff0000000000000ULL}, {1, 12, 0x7ff8000000000000ULL},
+        {1, 13, 0x0000000000000000ULL}, {1, 14, 0x7ff0000000000000ULL},
+        {1, 15, 0x8000000000000000ULL}, {1, 16, 0x0000000000000000ULL},
+        {2, 0, 0x3ff0000000000000ULL}, {2, 1, 0x3ff0000000000000ULL},
+        {2, 2, 0x3ff0000000000000ULL}, {2, 3, 0x3ff0000000000000ULL},
+        {2, 4, 0x3ff0000000000000ULL}, {2, 5, 0x3ff0000000000000ULL},
+        {2, 6, 0x3ff0000000000000ULL}, {2, 7, 0x3ff0000000000000ULL},
+        {2, 8, 0x3ff0000000000000ULL}, {2, 9, 0x3ff0000000000000ULL},
+        {2, 10, 0x3ff0000000000000ULL}, {2, 11, 0x3ff0000000000000ULL},
+        {2, 12, 0x3ff0000000000000ULL}, {2, 13, 0x3ff0000000000000ULL},
+        {2, 14, 0x3ff0000000000000ULL}, {2, 15, 0x3ff0000000000000ULL},
+        {2, 16, 0x3ff0000000000000ULL}, {3, 0, 0x3ff0000000000000ULL},
+        {3, 1, 0x3ff0000000000000ULL}, {3, 2, 0xbff0000000000000ULL},
+        {3, 3, 0xbff0000000000000ULL}, {3, 4, 0x3ff0000000000000ULL},
+        {3, 5, 0x3ff0000000000000ULL}, {3, 6, 0xbff0000000000000ULL},
+        {3, 7, 0xbff0000000000000ULL}, {3, 8, 0x7ff8000000000000ULL},
+        {3, 9, 0x7ff8000000000000ULL}, {3, 10, 0x3ff0000000000000ULL},
+        {3, 11, 0x3ff0000000000000ULL}, {3, 12, 0x7ff8000000000000ULL},
+        {3, 13, 0x3ff0000000000000ULL}, {3, 14, 0x3ff0000000000000ULL},
+        {3, 15, 0xbff0000000000000ULL}, {3, 16, 0x7ff8000000000000ULL},
+        {4, 0, 0x3ff0000000000000ULL}, {4, 1, 0x3ff0000000000000ULL},
+        {4, 10, 0x0000000000000000ULL}, {4, 11, 0x7ff0000000000000ULL},
+        {4, 12, 0x7ff8000000000000ULL}, {4, 13, 0x0000000000000000ULL},
+        {4, 14, 0x7ff0000000000000ULL}, {4, 15, 0x0000000000000000ULL},
+        {5, 0, 0x3ff0000000000000ULL}, {5, 1, 0x3ff0000000000000ULL},
+        {5, 8, 0x7ff8000000000000ULL}, {5, 9, 0x7ff8000000000000ULL},
+        {5, 10, 0x0000000000000000ULL}, {5, 11, 0x7ff0000000000000ULL},
+        {5, 12, 0x7ff8000000000000ULL}, {5, 13, 0x0000000000000000ULL},
+        {5, 14, 0x7ff0000000000000ULL}, {5, 15, 0x8000000000000000ULL},
+        {5, 16, 0x7ff8000000000000ULL}, {6, 0, 0x3ff0000000000000ULL},
+        {6, 1, 0x3ff0000000000000ULL}, {6, 10, 0x7ff0000000000000ULL},
+        {6, 11, 0x0000000000000000ULL}, {6, 12, 0x7ff8000000000000ULL},
+        {6, 13, 0x7ff0000000000000ULL}, {6, 14, 0x0000000000000000ULL},
+        {6, 15, 0x7ff0000000000000ULL}, {7, 0, 0x3ff0000000000000ULL},
+        {7, 1, 0x3ff0000000000000ULL}, {7, 8, 0x7ff8000000000000ULL},
+        {7, 9, 0x7ff8000000000000ULL}, {7, 10, 0x7ff0000000000000ULL},
+        {7, 11, 0x0000000000000000ULL}, {7, 12, 0x7ff8000000000000ULL},
+        {7, 13, 0x7ff0000000000000ULL}, {7, 14, 0x0000000000000000ULL},
+        {7, 15, 0xfff0000000000000ULL}, {7, 16, 0x7ff8000000000000ULL},
+        {8, 0, 0x3ff0000000000000ULL}, {8, 1, 0x3ff0000000000000ULL},
+        {8, 2, 0x7ff0000000000000ULL}, {8, 3, 0x0000000000000000ULL},
+        {8, 4, 0x7ff0000000000000ULL}, {8, 5, 0x0000000000000000ULL},
+        {8, 6, 0x7ff0000000000000ULL}, {8, 7, 0x0000000000000000ULL},
+        {8, 8, 0x7ff0000000000000ULL}, {8, 9, 0x0000000000000000ULL},
+        {8, 10, 0x7ff0000000000000ULL}, {8, 11, 0x0000000000000000ULL},
+        {8, 12, 0x7ff8000000000000ULL}, {8, 13, 0x7ff0000000000000ULL},
+        {8, 14, 0x0000000000000000ULL}, {8, 15, 0x7ff0000000000000ULL},
+        {8, 16, 0x7ff0000000000000ULL}, {9, 0, 0x3ff0000000000000ULL},
+        {9, 1, 0x3ff0000000000000ULL}, {9, 2, 0xfff0000000000000ULL},
+        {9, 3, 0x8000000000000000ULL}, {9, 4, 0x7ff0000000000000ULL},
+        {9, 5, 0x0000000000000000ULL}, {9, 6, 0xfff0000000000000ULL},
+        {9, 7, 0x8000000000000000ULL}, {9, 8, 0x7ff0000000000000ULL},
+        {9, 9, 0x0000000000000000ULL}, {9, 10, 0x7ff0000000000000ULL},
+        {9, 11, 0x0000000000000000ULL}, {9, 12, 0x7ff8000000000000ULL},
+        {9, 13, 0x7ff0000000000000ULL}, {9, 14, 0x0000000000000000ULL},
+        {9, 15, 0xfff0000000000000ULL}, {9, 16, 0x7ff0000000000000ULL},
+        {10, 0, 0x3ff0000000000000ULL}, {10, 1, 0x3ff0000000000000ULL},
+        {10, 2, 0x7ff8000000000000ULL}, {10, 3, 0x7ff8000000000000ULL},
+        {10, 4, 0x7ff8000000000000ULL}, {10, 5, 0x7ff8000000000000ULL},
+        {10, 6, 0x7ff8000000000000ULL}, {10, 7, 0x7ff8000000000000ULL},
+        {10, 8, 0x7ff8000000000000ULL}, {10, 9, 0x7ff8000000000000ULL},
+        {10, 10, 0x7ff8000000000000ULL}, {10, 11, 0x7ff8000000000000ULL},
+        {10, 12, 0x7ff8000000000000ULL}, {10, 13, 0x7ff8000000000000ULL},
+        {10, 14, 0x7ff8000000000000ULL}, {10, 15, 0x7ff8000000000000ULL},
+        {10, 16, 0x7ff8000000000000ULL}, {11, 0, 0x3ff0000000000000ULL},
+        {11, 1, 0x3ff0000000000000ULL}, {11, 3, 0x7ff0000000000000ULL},
+        {11, 4, 0x0000000000000000ULL}, {11, 5, 0x7ff0000000000000ULL},
+        {11, 6, 0x0000000000000000ULL}, {11, 7, 0x7ff0000000000000ULL},
+        {11, 10, 0x0000000000000000ULL}, {11, 11, 0x7ff0000000000000ULL},
+        {11, 12, 0x7ff8000000000000ULL}, {11, 13, 0x0000000000000000ULL},
+        {11, 14, 0x7ff0000000000000ULL}, {11, 15, 0x0000000000000000ULL},
+        {11, 16, 0x0000000000000000ULL}, {12, 0, 0x3ff0000000000000ULL},
+        {12, 1, 0x3ff0000000000000ULL}, {12, 3, 0xfff0000000000000ULL},
+        {12, 4, 0x0000000000000000ULL}, {12, 5, 0x7ff0000000000000ULL},
+        {12, 6, 0x8000000000000000ULL}, {12, 7, 0xfff0000000000000ULL},
+        {12, 8, 0x7ff8000000000000ULL}, {12, 9, 0x7ff8000000000000ULL},
+        {12, 10, 0x0000000000000000ULL}, {12, 11, 0x7ff0000000000000ULL},
+        {12, 12, 0x7ff8000000000000ULL}, {12, 13, 0x0000000000000000ULL},
+        {12, 14, 0x7ff0000000000000ULL}, {12, 15, 0x8000000000000000ULL},
+        {12, 16, 0x7ff8000000000000ULL}, {13, 0, 0x3ff0000000000000ULL},
+        {13, 1, 0x3ff0000000000000ULL}, {13, 4, 0x7ff0000000000000ULL},
+        {13, 5, 0x0000000000000000ULL}, {13, 6, 0x7ff0000000000000ULL},
+        {13, 7, 0x0000000000000000ULL}, {13, 10, 0x7ff0000000000000ULL},
+        {13, 11, 0x0000000000000000ULL}, {13, 12, 0x7ff8000000000000ULL},
+        {13, 13, 0x7ff0000000000000ULL}, {13, 14, 0x0000000000000000ULL},
+        {13, 15, 0x7ff0000000000000ULL}, {13, 16, 0x7ff0000000000000ULL},
+        {14, 0, 0x3ff0000000000000ULL}, {14, 1, 0x3ff0000000000000ULL},
+        {14, 8, 0x7ff8000000000000ULL}, {14, 9, 0x7ff8000000000000ULL},
+        {14, 10, 0x7ff0000000000000ULL}, {14, 11, 0x0000000000000000ULL},
+        {14, 12, 0x7ff8000000000000ULL}, {14, 13, 0x7ff0000000000000ULL},
+        {14, 14, 0x0000000000000000ULL}, {14, 15, 0xfff0000000000000ULL},
+        {14, 16, 0x7ff8000000000000ULL},
+    };
+    for (const BinarySpecial& special : recorded) {
+        const double x = xs[special.first_index];
+        const double y = ys[special.second_index];
+        require(same_bits(stx_auxlib::math::pow(x, y), std::bit_cast<double>(special.expected_bits)),
+                "pow(double): special input differs from its recorded result");
+    }
+    // The same inputs rounded to float.
+    const BinarySpecialFloat recorded_float[] = {
+        {0, 0, 0x3f800000U}, {0, 1, 0x3f800000U}, {0, 2, 0x00000000U},
+        {0, 3, 0x7f800000U}, {0, 4, 0x00000000U}, {0, 5, 0x7f800000U},
+        {0, 6, 0x00000000U}, {0, 7, 0x7f800000U}, {0, 8, 0x00000000U},
+        {0, 9, 0x7f800000U}, {0, 10, 0x00000000U}, {0, 11, 0x7f800000U},
+        {0, 12, 0x7fc00000U}, {0, 13, 0x00000000U}, {0, 14, 0x7f800000U},
+        {0, 15, 0x00000000U}, {0, 16, 0x00000000U}, {1, 0, 0x3f800000U},
+        {1, 1, 0x3f800000U}, {1, 2, 0x80000000U}, {1, 3, 0xff800000U},
+        {1, 4, 0x00000000U}, {1, 5, 0x7f800000U}, {1, 6, 0x80000000U},
+        {1, 7, 0xff800000U}, {1, 8, 0x00000000U}, {1, 9, 0x7f800000U},
+        {1, 10, 0x00000000U}, {1, 11, 0x7f800000U}, {1, 12, 0x7fc00000U},
+        {1, 13, 0x00000000U}, {1, 14, 0x7f800000U}, {1, 15, 0x00000000U},
+        {1, 16, 0x00000000U}, {2, 0, 0x3f800000U}, {2, 1, 0x3f800000U},
+        {2, 2, 0x3f800000U}, {2, 3, 0x3f800000U}, {2, 4, 0x3f800000U},
+        {2, 5, 0x3f800000U}, {2, 6, 0x3f800000U}, {2, 7, 0x3f800000U},
+        {2, 8, 0x3f800000U}, {2, 9, 0x3f800000U}, {2, 10, 0x3f800000U},
+        {2, 11, 0x3f800000U}, {2, 12, 0x3f800000U}, {2, 13, 0x3f800000U},
+        {2, 14, 0x3f800000U}, {2, 15, 0x3f800000U}, {2, 16, 0x3f800000U},
+        {3, 0, 0x3f800000U}, {3, 1, 0x3f800000U}, {3, 2, 0xbf800000U},
+        {3, 3, 0xbf800000U}, {3, 4, 0x3f800000U}, {3, 5, 0x3f800000U},
+        {3, 6, 0xbf800000U}, {3, 7, 0xbf800000U}, {3, 8, 0x7fc00000U},
+        {3, 9, 0x7fc00000U}, {3, 10, 0x3f800000U}, {3, 11, 0x3f800000U},
+        {3, 12, 0x7fc00000U}, {3, 13, 0x3f800000U}, {3, 14, 0x3f800000U},
+        {3, 15, 0x3f800000U}, {3, 16, 0x7fc00000U}, {4, 0, 0x3f800000U},
+        {4, 1, 0x3f800000U}, {4, 10, 0x00000000U}, {4, 11, 0x7f800000U},
+        {4, 12, 0x7fc00000U}, {4, 13, 0x00000000U}, {4, 14, 0x7f800000U},
+        {4, 15, 0x00000000U}, {5, 0, 0x3f800000U}, {5, 1, 0x3f800000U},
+        {5, 8, 0x7fc00000U}, {5, 9, 0x7fc00000U}, {5, 10, 0x00000000U},
+        {5, 11, 0x7f800000U}, {5, 12, 0x7fc00000U}, {5, 13, 0x00000000U},
+        {5, 14, 0x7f800000U}, {5, 15, 0x00000000U}, {5, 16, 0x7fc00000U},
+        {6, 0, 0x3f800000U}, {6, 1, 0x3f800000U}, {6, 10, 0x7f800000U},
+        {6, 11, 0x00000000U}, {6, 12, 0x7fc00000U}, {6, 13, 0x7f800000U},
+        {6, 14, 0x00000000U}, {6, 15, 0x7f800000U}, {7, 0, 0x3f800000U},
+        {7, 1, 0x3f800000U}, {7, 8, 0x7fc00000U}, {7, 9, 0x7fc00000U},
+        {7, 10, 0x7f800000U}, {7, 11, 0x00000000U}, {7, 12, 0x7fc00000U},
+        {7, 13, 0x7f800000U}, {7, 14, 0x00000000U}, {7, 15, 0x7f800000U},
+        {7, 16, 0x7fc00000U}, {8, 0, 0x3f800000U}, {8, 1, 0x3f800000U},
+        {8, 2, 0x7f800000U}, {8, 3, 0x00000000U}, {8, 4, 0x7f800000U},
+        {8, 5, 0x00000000U}, {8, 6, 0x7f800000U}, {8, 7, 0x00000000U},
+        {8, 8, 0x7f800000U}, {8, 9, 0x00000000U}, {8, 10, 0x7f800000U},
+        {8, 11, 0x00000000U}, {8, 12, 0x7fc00000U}, {8, 13, 0x7f800000U},
+        {8, 14, 0x00000000U}, {8, 15, 0x7f800000U}, {8, 16, 0x7f800000U},
+        {9, 0, 0x3f800000U}, {9, 1, 0x3f800000U}, {9, 2, 0xff800000U},
+        {9, 3, 0x80000000U}, {9, 4, 0x7f800000U}, {9, 5, 0x00000000U},
+        {9, 6, 0xff800000U}, {9, 7, 0x80000000U}, {9, 8, 0x7f800000U},
+        {9, 9, 0x00000000U}, {9, 10, 0x7f800000U}, {9, 11, 0x00000000U},
+        {9, 12, 0x7fc00000U}, {9, 13, 0x7f800000U}, {9, 14, 0x00000000U},
+        {9, 15, 0x7f800000U}, {9, 16, 0x7f800000U}, {10, 0, 0x3f800000U},
+        {10, 1, 0x3f800000U}, {10, 2, 0x7fc00000U}, {10, 3, 0x7fc00000U},
+        {10, 4, 0x7fc00000U}, {10, 5, 0x7fc00000U}, {10, 6, 0x7fc00000U},
+        {10, 7, 0x7fc00000U}, {10, 8, 0x7fc00000U}, {10, 9, 0x7fc00000U},
+        {10, 10, 0x7fc00000U}, {10, 11, 0x7fc00000U}, {10, 12, 0x7fc00000U},
+        {10, 13, 0x7fc00000U}, {10, 14, 0x7fc00000U}, {10, 15, 0x7fc00000U},
+        {10, 16, 0x7fc00000U}, {11, 0, 0x3f800000U}, {11, 1, 0x3f800000U},
+        {11, 3, 0x7f800000U}, {11, 4, 0x00000000U}, {11, 5, 0x7f800000U},
+        {11, 6, 0x00000000U}, {11, 7, 0x7f800000U}, {11, 10, 0x00000000U},
+        {11, 11, 0x7f800000U}, {11, 12, 0x7fc00000U}, {11, 13, 0x00000000U},
+        {11, 14, 0x7f800000U}, {11, 15, 0x00000000U}, {11, 16, 0x00000000U},
+        {12, 0, 0x3f800000U}, {12, 1, 0x3f800000U}, {12, 3, 0xff800000U},
+        {12, 4, 0x00000000U}, {12, 5, 0x7f800000U}, {12, 6, 0x80000000U},
+        {12, 7, 0xff800000U}, {12, 8, 0x00000000U}, {12, 9, 0x7f800000U},
+        {12, 10, 0x00000000U}, {12, 11, 0x7f800000U}, {12, 12, 0x7fc00000U},
+        {12, 13, 0x00000000U}, {12, 14, 0x7f800000U}, {12, 15, 0x00000000U},
+        {12, 16, 0x00000000U}, {13, 0, 0x3f800000U}, {13, 1, 0x3f800000U},
+        {13, 4, 0x7f800000U}, {13, 5, 0x00000000U}, {13, 6, 0x7f800000U},
+        {13, 7, 0x00000000U}, {13, 10, 0x7f800000U}, {13, 11, 0x00000000U},
+        {13, 12, 0x7fc00000U}, {13, 13, 0x7f800000U}, {13, 14, 0x00000000U},
+        {13, 15, 0x7f800000U}, {13, 16, 0x7f800000U}, {14, 0, 0x3f800000U},
+        {14, 1, 0x3f800000U}, {14, 8, 0x7fc00000U}, {14, 9, 0x7fc00000U},
+        {14, 10, 0x7f800000U}, {14, 11, 0x00000000U}, {14, 12, 0x7fc00000U},
+        {14, 13, 0x7f800000U}, {14, 14, 0x00000000U}, {14, 15, 0x7f800000U},
+        {14, 16, 0x7fc00000U},
+    };
+    for (const BinarySpecialFloat& special : recorded_float) {
+        const float xf = static_cast<float>(xs[special.first_index]);
+        const float yf = static_cast<float>(ys[special.second_index]);
+        require(same_bits(stx_auxlib::math::pow(xf, yf), std::bit_cast<float>(special.expected_bits)),
+                "pow(float): special input differs from its recorded result");
     }
     // Exactly representable results are exact.
     for (int n = -1074; n <= 1023; ++n) {
@@ -952,26 +1143,84 @@ void pow_determinism() {
 
 // ---- hypot ------------------------------------------------------------------
 
-// Annex F and exact cases.
+// Annex F and exact cases, against recorded results (any NaN matches a
+// recorded NaN).
 void hypot_special_values() {
     const double infinity = std::numeric_limits<double>::infinity();
     const double nan = std::numeric_limits<double>::quiet_NaN();
     const double values[] = {0.0, -0.0, 1.0, -3.0, infinity, -infinity, nan, 0x1p-1074,
                              0x1.fffffffffffffp1023};
-    for (const double x : values) {
-        for (const double y : values) {
-            const double library = std::hypot(x, y);
-            if (std::isfinite(library) && library != 0.0 && !(x == 0.0 || y == 0.0)) continue;
-            require(same_bits(stx_auxlib::math::hypot(x, y), library),
-                    "hypot(double): special input differs from Annex F");
-            const float xf = static_cast<float>(x);
-            const float yf = static_cast<float>(y);
-            const float library_float = std::hypot(xf, yf);
-            if (std::isfinite(library_float) && library_float != 0.0f && !(xf == 0.0f || yf == 0.0f))
-                continue;
-            require(same_bits(stx_auxlib::math::hypot(xf, yf), library_float),
-                    "hypot(float): special input differs from Annex F");
-        }
+    // {x index, y index, result bits}, both indices into values
+    const BinarySpecial recorded[] = {
+        {0, 0, 0x0000000000000000ULL}, {0, 1, 0x0000000000000000ULL},
+        {0, 2, 0x3ff0000000000000ULL}, {0, 3, 0x4008000000000000ULL},
+        {0, 4, 0x7ff0000000000000ULL}, {0, 5, 0x7ff0000000000000ULL},
+        {0, 6, 0x7ff8000000000000ULL}, {0, 7, 0x0000000000000001ULL},
+        {0, 8, 0x7fefffffffffffffULL}, {1, 0, 0x0000000000000000ULL},
+        {1, 1, 0x0000000000000000ULL}, {1, 2, 0x3ff0000000000000ULL},
+        {1, 3, 0x4008000000000000ULL}, {1, 4, 0x7ff0000000000000ULL},
+        {1, 5, 0x7ff0000000000000ULL}, {1, 6, 0x7ff8000000000000ULL},
+        {1, 7, 0x0000000000000001ULL}, {1, 8, 0x7fefffffffffffffULL},
+        {2, 0, 0x3ff0000000000000ULL}, {2, 1, 0x3ff0000000000000ULL},
+        {2, 4, 0x7ff0000000000000ULL}, {2, 5, 0x7ff0000000000000ULL},
+        {2, 6, 0x7ff8000000000000ULL}, {3, 0, 0x4008000000000000ULL},
+        {3, 1, 0x4008000000000000ULL}, {3, 4, 0x7ff0000000000000ULL},
+        {3, 5, 0x7ff0000000000000ULL}, {3, 6, 0x7ff8000000000000ULL},
+        {4, 0, 0x7ff0000000000000ULL}, {4, 1, 0x7ff0000000000000ULL},
+        {4, 2, 0x7ff0000000000000ULL}, {4, 3, 0x7ff0000000000000ULL},
+        {4, 4, 0x7ff0000000000000ULL}, {4, 5, 0x7ff0000000000000ULL},
+        {4, 6, 0x7ff0000000000000ULL}, {4, 7, 0x7ff0000000000000ULL},
+        {4, 8, 0x7ff0000000000000ULL}, {5, 0, 0x7ff0000000000000ULL},
+        {5, 1, 0x7ff0000000000000ULL}, {5, 2, 0x7ff0000000000000ULL},
+        {5, 3, 0x7ff0000000000000ULL}, {5, 4, 0x7ff0000000000000ULL},
+        {5, 5, 0x7ff0000000000000ULL}, {5, 6, 0x7ff0000000000000ULL},
+        {5, 7, 0x7ff0000000000000ULL}, {5, 8, 0x7ff0000000000000ULL},
+        {6, 0, 0x7ff8000000000000ULL}, {6, 1, 0x7ff8000000000000ULL},
+        {6, 2, 0x7ff8000000000000ULL}, {6, 3, 0x7ff8000000000000ULL},
+        {6, 4, 0x7ff0000000000000ULL}, {6, 5, 0x7ff0000000000000ULL},
+        {6, 6, 0x7ff8000000000000ULL}, {6, 7, 0x7ff8000000000000ULL},
+        {6, 8, 0x7ff8000000000000ULL}, {7, 0, 0x0000000000000001ULL},
+        {7, 1, 0x0000000000000001ULL}, {7, 4, 0x7ff0000000000000ULL},
+        {7, 5, 0x7ff0000000000000ULL}, {7, 6, 0x7ff8000000000000ULL},
+        {8, 0, 0x7fefffffffffffffULL}, {8, 1, 0x7fefffffffffffffULL},
+        {8, 4, 0x7ff0000000000000ULL}, {8, 5, 0x7ff0000000000000ULL},
+        {8, 6, 0x7ff8000000000000ULL}, {8, 8, 0x7ff0000000000000ULL},
+    };
+    for (const BinarySpecial& special : recorded) {
+        const double x = values[special.first_index];
+        const double y = values[special.second_index];
+        require(same_bits(stx_auxlib::math::hypot(x, y), std::bit_cast<double>(special.expected_bits)),
+                "hypot(double): special input differs from its recorded result");
+    }
+    const BinarySpecialFloat recorded_float[] = {
+        {0, 0, 0x00000000U}, {0, 1, 0x00000000U}, {0, 2, 0x3f800000U},
+        {0, 3, 0x40400000U}, {0, 4, 0x7f800000U}, {0, 5, 0x7f800000U},
+        {0, 6, 0x7fc00000U}, {0, 7, 0x00000000U}, {0, 8, 0x7f800000U},
+        {1, 0, 0x00000000U}, {1, 1, 0x00000000U}, {1, 2, 0x3f800000U},
+        {1, 3, 0x40400000U}, {1, 4, 0x7f800000U}, {1, 5, 0x7f800000U},
+        {1, 6, 0x7fc00000U}, {1, 7, 0x00000000U}, {1, 8, 0x7f800000U},
+        {2, 0, 0x3f800000U}, {2, 1, 0x3f800000U}, {2, 4, 0x7f800000U},
+        {2, 5, 0x7f800000U}, {2, 6, 0x7fc00000U}, {3, 0, 0x40400000U},
+        {3, 1, 0x40400000U}, {3, 4, 0x7f800000U}, {3, 5, 0x7f800000U},
+        {3, 6, 0x7fc00000U}, {4, 0, 0x7f800000U}, {4, 1, 0x7f800000U},
+        {4, 2, 0x7f800000U}, {4, 3, 0x7f800000U}, {4, 4, 0x7f800000U},
+        {4, 5, 0x7f800000U}, {4, 6, 0x7f800000U}, {4, 7, 0x7f800000U},
+        {4, 8, 0x7f800000U}, {5, 0, 0x7f800000U}, {5, 1, 0x7f800000U},
+        {5, 2, 0x7f800000U}, {5, 3, 0x7f800000U}, {5, 4, 0x7f800000U},
+        {5, 5, 0x7f800000U}, {5, 6, 0x7f800000U}, {5, 7, 0x7f800000U},
+        {5, 8, 0x7f800000U}, {6, 0, 0x7fc00000U}, {6, 1, 0x7fc00000U},
+        {6, 2, 0x7fc00000U}, {6, 3, 0x7fc00000U}, {6, 4, 0x7f800000U},
+        {6, 5, 0x7f800000U}, {6, 6, 0x7fc00000U}, {6, 7, 0x7fc00000U},
+        {6, 8, 0x7f800000U}, {7, 0, 0x00000000U}, {7, 1, 0x00000000U},
+        {7, 4, 0x7f800000U}, {7, 5, 0x7f800000U}, {7, 6, 0x7fc00000U},
+        {8, 0, 0x7f800000U}, {8, 1, 0x7f800000U}, {8, 4, 0x7f800000U},
+        {8, 5, 0x7f800000U}, {8, 6, 0x7f800000U}, {8, 8, 0x7f800000U},
+    };
+    for (const BinarySpecialFloat& special : recorded_float) {
+        const float xf = static_cast<float>(values[special.first_index]);
+        const float yf = static_cast<float>(values[special.second_index]);
+        require(same_bits(stx_auxlib::math::hypot(xf, yf), std::bit_cast<float>(special.expected_bits)),
+                "hypot(float): special input differs from its recorded result");
     }
     // Pythagorean triples are exact, at any common power of two.
     const double triples[][3] = {{3.0, 4.0, 5.0}, {5.0, 12.0, 13.0}, {8.0, 15.0, 17.0},
@@ -1134,38 +1383,98 @@ const UnaryKernel inverse_trig_kernels[] = {
     {"acos", owned_acos_d, owned_acos_f, library_acos_d, wide::acos_reference, 1.0},
 };
 
-// Annex F: special inputs match the C library bit for bit (their results
-// are zeros, NaN, or pi multiples that both round from the same constant).
+// A recorded special case of an inverse trig kernel: the kernel's index in
+// inverse_trig_kernels, the input's index, and the double and float results.
+struct InverseTrigSpecial final {
+    std::size_t kernel_index{0};
+    std::size_t input_index{0};
+    std::uint64_t double_bits{0};
+    std::uint32_t float_bits{0};
+};
+
+// Annex F: special inputs give their recorded results (zeros, NaN, or pi
+// multiples rounded from one constant). The results are recorded rather than
+// taken from the host C library; any NaN matches a recorded NaN. Ordinary
+// values (atan(+-2), asin and acos inside the domain) are checked for
+// accuracy elsewhere.
 void inverse_trig_special_values() {
     const double infinity = std::numeric_limits<double>::infinity();
     const double nan = std::numeric_limits<double>::quiet_NaN();
     const double unary_inputs[] = {0.0, -0.0, 1.0, -1.0, 2.0, -2.0, infinity, -infinity, nan,
                                    0x1p-1074, -0x1p-30, 0x1p61, -0x1p70};
-    for (const UnaryKernel& kernel : inverse_trig_kernels) {
-        for (const double x : unary_inputs) {
-            // Ordinary values (atan(+-2), asin and acos inside the domain) are
-            // checked for accuracy elsewhere, not for the library's bits.
-            const bool ordinary = std::isfinite(x) && std::fabs(x) > 0x1p-27 &&
-                                  (kernel.domain == 0.0 ? std::fabs(x) < 0x1p60 : std::fabs(x) < 1.0);
-            if (ordinary) continue;
-            require(same_bits((*kernel.owned_double)(x), (*kernel.library_double)(x)),
-                    "inverse trig (double): special input differs from Annex F");
-            const float xf = static_cast<float>(x);
-            require(same_bits((*kernel.owned_float)(xf), static_cast<float>((*kernel.library_double)(xf))) ||
-                        std::fabs(xf) == 1.0f || std::fabs(xf) > 0x1p60f,
-                    "inverse trig (float): special input differs from Annex F");
-        }
+    // {kernel index, unary_inputs index, double result bits, float result bits}
+    const InverseTrigSpecial recorded[] = {
+        {0, 0, 0x0000000000000000ULL, 0x00000000U}, {0, 1, 0x8000000000000000ULL, 0x80000000U},
+        {0, 6, 0x3ff921fb54442d18ULL, 0x3fc90fdbU}, {0, 7, 0xbff921fb54442d18ULL, 0xbfc90fdbU},
+        {0, 8, 0x7ff8000000000000ULL, 0x7fc00000U}, {0, 9, 0x0000000000000001ULL, 0x00000000U},
+        {0, 10, 0xbe10000000000000ULL, 0xb0800000U}, {0, 11, 0x3ff921fb54442d18ULL, 0x3fc90fdbU},
+        {0, 12, 0xbff921fb54442d18ULL, 0xbfc90fdbU}, {1, 0, 0x0000000000000000ULL, 0x00000000U},
+        {1, 1, 0x8000000000000000ULL, 0x80000000U}, {1, 2, 0x3ff921fb54442d18ULL, 0x3fc90fdbU},
+        {1, 3, 0xbff921fb54442d18ULL, 0xbfc90fdbU}, {1, 4, 0x7ff8000000000000ULL, 0x7fc00000U},
+        {1, 5, 0x7ff8000000000000ULL, 0x7fc00000U}, {1, 6, 0x7ff8000000000000ULL, 0x7fc00000U},
+        {1, 7, 0x7ff8000000000000ULL, 0x7fc00000U}, {1, 8, 0x7ff8000000000000ULL, 0x7fc00000U},
+        {1, 9, 0x0000000000000001ULL, 0x00000000U}, {1, 10, 0xbe10000000000000ULL, 0xb0800000U},
+        {1, 11, 0x7ff8000000000000ULL, 0x7fc00000U}, {1, 12, 0x7ff8000000000000ULL, 0x7fc00000U},
+        {2, 0, 0x3ff921fb54442d18ULL, 0x3fc90fdbU}, {2, 1, 0x3ff921fb54442d18ULL, 0x3fc90fdbU},
+        {2, 2, 0x0000000000000000ULL, 0x00000000U}, {2, 3, 0x400921fb54442d18ULL, 0x40490fdbU},
+        {2, 4, 0x7ff8000000000000ULL, 0x7fc00000U}, {2, 5, 0x7ff8000000000000ULL, 0x7fc00000U},
+        {2, 6, 0x7ff8000000000000ULL, 0x7fc00000U}, {2, 7, 0x7ff8000000000000ULL, 0x7fc00000U},
+        {2, 8, 0x7ff8000000000000ULL, 0x7fc00000U}, {2, 9, 0x3ff921fb54442d18ULL, 0x3fc90fdbU},
+        {2, 10, 0x3ff921fb54842d18ULL, 0x3fc90fdbU}, {2, 11, 0x7ff8000000000000ULL, 0x7fc00000U},
+        {2, 12, 0x7ff8000000000000ULL, 0x7fc00000U},
+    };
+    for (const InverseTrigSpecial& special : recorded) {
+        const UnaryKernel& kernel = inverse_trig_kernels[special.kernel_index];
+        const double x = unary_inputs[special.input_index];
+        require(same_bits((*kernel.owned_double)(x), std::bit_cast<double>(special.double_bits)),
+                "inverse trig (double): special input differs from its recorded result");
+        const float xf = static_cast<float>(x);
+        require(same_bits((*kernel.owned_float)(xf), std::bit_cast<float>(special.float_bits)),
+                "inverse trig (float): special input differs from its recorded result");
     }
     const double atan2_inputs[] = {0.0, -0.0, 1.0, -1.0, infinity, -infinity, nan, 0x1p-1074,
                                    -0x1.fffffffffffffp1023};
-    for (const double y : atan2_inputs) {
-        for (const double x : atan2_inputs) {
-            const double library = std::atan2(y, x);
-            const bool special = !std::isfinite(x) || !std::isfinite(y) || x == 0.0 || y == 0.0;
-            if (!special) continue;
-            require(same_bits(stx_auxlib::math::atan2(y, x), library),
-                    "atan2(double): special input differs from Annex F");
-        }
+    // {y index, x index, result bits}, both indices into atan2_inputs
+    const BinarySpecial recorded_atan2[] = {
+        {0, 0, 0x0000000000000000ULL}, {0, 1, 0x400921fb54442d18ULL},
+        {0, 2, 0x0000000000000000ULL}, {0, 3, 0x400921fb54442d18ULL},
+        {0, 4, 0x0000000000000000ULL}, {0, 5, 0x400921fb54442d18ULL},
+        {0, 6, 0x7ff8000000000000ULL}, {0, 7, 0x0000000000000000ULL},
+        {0, 8, 0x400921fb54442d18ULL}, {1, 0, 0x8000000000000000ULL},
+        {1, 1, 0xc00921fb54442d18ULL}, {1, 2, 0x8000000000000000ULL},
+        {1, 3, 0xc00921fb54442d18ULL}, {1, 4, 0x8000000000000000ULL},
+        {1, 5, 0xc00921fb54442d18ULL}, {1, 6, 0x7ff8000000000000ULL},
+        {1, 7, 0x8000000000000000ULL}, {1, 8, 0xc00921fb54442d18ULL},
+        {2, 0, 0x3ff921fb54442d18ULL}, {2, 1, 0x3ff921fb54442d18ULL},
+        {2, 4, 0x0000000000000000ULL}, {2, 5, 0x400921fb54442d18ULL},
+        {2, 6, 0x7ff8000000000000ULL}, {3, 0, 0xbff921fb54442d18ULL},
+        {3, 1, 0xbff921fb54442d18ULL}, {3, 4, 0x8000000000000000ULL},
+        {3, 5, 0xc00921fb54442d18ULL}, {3, 6, 0x7ff8000000000000ULL},
+        {4, 0, 0x3ff921fb54442d18ULL}, {4, 1, 0x3ff921fb54442d18ULL},
+        {4, 2, 0x3ff921fb54442d18ULL}, {4, 3, 0x3ff921fb54442d18ULL},
+        {4, 4, 0x3fe921fb54442d18ULL}, {4, 5, 0x4002d97c7f3321d2ULL},
+        {4, 6, 0x7ff8000000000000ULL}, {4, 7, 0x3ff921fb54442d18ULL},
+        {4, 8, 0x3ff921fb54442d18ULL}, {5, 0, 0xbff921fb54442d18ULL},
+        {5, 1, 0xbff921fb54442d18ULL}, {5, 2, 0xbff921fb54442d18ULL},
+        {5, 3, 0xbff921fb54442d18ULL}, {5, 4, 0xbfe921fb54442d18ULL},
+        {5, 5, 0xc002d97c7f3321d2ULL}, {5, 6, 0x7ff8000000000000ULL},
+        {5, 7, 0xbff921fb54442d18ULL}, {5, 8, 0xbff921fb54442d18ULL},
+        {6, 0, 0x7ff8000000000000ULL}, {6, 1, 0x7ff8000000000000ULL},
+        {6, 2, 0x7ff8000000000000ULL}, {6, 3, 0x7ff8000000000000ULL},
+        {6, 4, 0x7ff8000000000000ULL}, {6, 5, 0x7ff8000000000000ULL},
+        {6, 6, 0x7ff8000000000000ULL}, {6, 7, 0x7ff8000000000000ULL},
+        {6, 8, 0x7ff8000000000000ULL}, {7, 0, 0x3ff921fb54442d18ULL},
+        {7, 1, 0x3ff921fb54442d18ULL}, {7, 4, 0x0000000000000000ULL},
+        {7, 5, 0x400921fb54442d18ULL}, {7, 6, 0x7ff8000000000000ULL},
+        {8, 0, 0xbff921fb54442d18ULL}, {8, 1, 0xbff921fb54442d18ULL},
+        {8, 4, 0x8000000000000000ULL}, {8, 5, 0xc00921fb54442d18ULL},
+        {8, 6, 0x7ff8000000000000ULL},
+    };
+    for (const BinarySpecial& special : recorded_atan2) {
+        const double y = atan2_inputs[special.first_index];
+        const double x = atan2_inputs[special.second_index];
+        require(same_bits(stx_auxlib::math::atan2(y, x), std::bit_cast<double>(special.expected_bits)),
+                "atan2(double): special input differs from its recorded result");
     }
     require(same_bits(stx_auxlib::math::acos(1.0), 0.0) && same_bits(stx_auxlib::math::acos(1.0f), 0.0f),
             "acos: acos(1) is not +0");
@@ -1376,22 +1685,105 @@ double region_input(const SampleRegion& region, Lcg& lcg, const int i) {
     return (i % 2 == 0) ? magnitude : -magnitude;
 }
 
-// Inputs whose results are zeros, ones, infinities or NaN match the C
-// library bit for bit.
+// Recorded results for inputs whose results are zeros, ones, infinities, NaN
+// or tiny (|x| < 2^-27). They are recorded rather than taken from the host C
+// library, which differs between hosts: UCRT's cbrt(-0x1p-40) is one ulp
+// below the correctly rounded -0x1.965fea53d6e3dp-14 (long double cbrtl
+// agrees with the recorded value), and UCRT's tan(+-infinity) is a negative
+// NaN. Any NaN matches a recorded NaN, since C leaves its sign unspecified.
+struct SpecialValue final {
+    UnaryDouble owned{nullptr};
+    double x{0.0};
+    std::uint64_t expected_bits{0};
+};
+
 void remaining_special_values() {
     const double infinity = std::numeric_limits<double>::infinity();
     const double nan = std::numeric_limits<double>::quiet_NaN();
-    const double inputs[] = {0.0, -0.0, 1.0, -1.0, 2.0, -2.0, infinity, -infinity, nan, 0x1p-1074,
-                             -0x1p-40, 800.0, -800.0, 1e300};
-    for (const RegionKernel& kernel : remaining_kernels) {
-        for (const double x : inputs) {
-            const double library = (*kernel.library_double)(x);
-            const bool special = !std::isfinite(library) || library == 0.0 || std::fabs(library) == 1.0 ||
-                                 std::fabs(x) < 0x1p-27;
-            if (!special) continue;
-            require(same_bits((*kernel.owned_double)(x), library),
-                    "tan/cbrt/hyperbolic (double): special input differs from the C library");
-        }
+    const SpecialValue recorded[] = {
+        {owned_tan_d, 0.0, 0x0000000000000000ULL},
+        {owned_tan_d, -0.0, 0x8000000000000000ULL},
+        {owned_tan_d, infinity, 0x7ff8000000000000ULL},
+        {owned_tan_d, -infinity, 0x7ff8000000000000ULL},
+        {owned_tan_d, nan, 0x7ff8000000000000ULL},
+        {owned_tan_d, 0x1p-1074, 0x0000000000000001ULL},
+        {owned_tan_d, -0x1p-40, 0xbd70000000000000ULL},
+        {owned_cbrt_d, 0.0, 0x0000000000000000ULL},
+        {owned_cbrt_d, -0.0, 0x8000000000000000ULL},
+        {owned_cbrt_d, 1.0, 0x3ff0000000000000ULL},
+        {owned_cbrt_d, -1.0, 0xbff0000000000000ULL},
+        {owned_cbrt_d, infinity, 0x7ff0000000000000ULL},
+        {owned_cbrt_d, -infinity, 0xfff0000000000000ULL},
+        {owned_cbrt_d, nan, 0x7ff8000000000000ULL},
+        {owned_cbrt_d, 0x1p-1074, 0x2990000000000000ULL},
+        {owned_cbrt_d, -0x1p-40, 0xbf1965fea53d6e3dULL},
+        {owned_sinh_d, 0.0, 0x0000000000000000ULL},
+        {owned_sinh_d, -0.0, 0x8000000000000000ULL},
+        {owned_sinh_d, infinity, 0x7ff0000000000000ULL},
+        {owned_sinh_d, -infinity, 0xfff0000000000000ULL},
+        {owned_sinh_d, nan, 0x7ff8000000000000ULL},
+        {owned_sinh_d, 0x1p-1074, 0x0000000000000001ULL},
+        {owned_sinh_d, -0x1p-40, 0xbd70000000000000ULL},
+        {owned_sinh_d, 800.0, 0x7ff0000000000000ULL},
+        {owned_sinh_d, -800.0, 0xfff0000000000000ULL},
+        {owned_sinh_d, 1e300, 0x7ff0000000000000ULL},
+        {owned_cosh_d, 0.0, 0x3ff0000000000000ULL},
+        {owned_cosh_d, -0.0, 0x3ff0000000000000ULL},
+        {owned_cosh_d, infinity, 0x7ff0000000000000ULL},
+        {owned_cosh_d, -infinity, 0x7ff0000000000000ULL},
+        {owned_cosh_d, nan, 0x7ff8000000000000ULL},
+        {owned_cosh_d, 0x1p-1074, 0x3ff0000000000000ULL},
+        {owned_cosh_d, -0x1p-40, 0x3ff0000000000000ULL},
+        {owned_cosh_d, 800.0, 0x7ff0000000000000ULL},
+        {owned_cosh_d, -800.0, 0x7ff0000000000000ULL},
+        {owned_cosh_d, 1e300, 0x7ff0000000000000ULL},
+        {owned_tanh_d, 0.0, 0x0000000000000000ULL},
+        {owned_tanh_d, -0.0, 0x8000000000000000ULL},
+        {owned_tanh_d, infinity, 0x3ff0000000000000ULL},
+        {owned_tanh_d, -infinity, 0xbff0000000000000ULL},
+        {owned_tanh_d, nan, 0x7ff8000000000000ULL},
+        {owned_tanh_d, 0x1p-1074, 0x0000000000000001ULL},
+        {owned_tanh_d, -0x1p-40, 0xbd70000000000000ULL},
+        {owned_tanh_d, 800.0, 0x3ff0000000000000ULL},
+        {owned_tanh_d, -800.0, 0xbff0000000000000ULL},
+        {owned_tanh_d, 1e300, 0x3ff0000000000000ULL},
+        {owned_asinh_d, 0.0, 0x0000000000000000ULL},
+        {owned_asinh_d, -0.0, 0x8000000000000000ULL},
+        {owned_asinh_d, infinity, 0x7ff0000000000000ULL},
+        {owned_asinh_d, -infinity, 0xfff0000000000000ULL},
+        {owned_asinh_d, nan, 0x7ff8000000000000ULL},
+        {owned_asinh_d, 0x1p-1074, 0x0000000000000001ULL},
+        {owned_asinh_d, -0x1p-40, 0xbd70000000000000ULL},
+        {owned_acosh_d, 0.0, 0x7ff8000000000000ULL},
+        {owned_acosh_d, -0.0, 0x7ff8000000000000ULL},
+        {owned_acosh_d, 1.0, 0x0000000000000000ULL},
+        {owned_acosh_d, -1.0, 0x7ff8000000000000ULL},
+        {owned_acosh_d, -2.0, 0x7ff8000000000000ULL},
+        {owned_acosh_d, infinity, 0x7ff0000000000000ULL},
+        {owned_acosh_d, -infinity, 0x7ff8000000000000ULL},
+        {owned_acosh_d, nan, 0x7ff8000000000000ULL},
+        {owned_acosh_d, 0x1p-1074, 0x7ff8000000000000ULL},
+        {owned_acosh_d, -0x1p-40, 0x7ff8000000000000ULL},
+        {owned_acosh_d, -800.0, 0x7ff8000000000000ULL},
+        {owned_atanh_d, 0.0, 0x0000000000000000ULL},
+        {owned_atanh_d, -0.0, 0x8000000000000000ULL},
+        {owned_atanh_d, 1.0, 0x7ff0000000000000ULL},
+        {owned_atanh_d, -1.0, 0xfff0000000000000ULL},
+        {owned_atanh_d, 2.0, 0x7ff8000000000000ULL},
+        {owned_atanh_d, -2.0, 0x7ff8000000000000ULL},
+        {owned_atanh_d, infinity, 0x7ff8000000000000ULL},
+        {owned_atanh_d, -infinity, 0x7ff8000000000000ULL},
+        {owned_atanh_d, nan, 0x7ff8000000000000ULL},
+        {owned_atanh_d, 0x1p-1074, 0x0000000000000001ULL},
+        {owned_atanh_d, -0x1p-40, 0xbd70000000000000ULL},
+        {owned_atanh_d, 800.0, 0x7ff8000000000000ULL},
+        {owned_atanh_d, -800.0, 0x7ff8000000000000ULL},
+        {owned_atanh_d, 1e300, 0x7ff8000000000000ULL},
+    };
+    for (const SpecialValue& special : recorded) {
+        const double expected = std::bit_cast<double>(special.expected_bits);
+        require(same_bits((*special.owned)(special.x), expected),
+                "tan/cbrt/hyperbolic (double): special input differs from its recorded result");
     }
     for (int k = 1; k <= 200; ++k) {
         const double cube = static_cast<double>(k) * static_cast<double>(k) * static_cast<double>(k);
