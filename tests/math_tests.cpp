@@ -99,6 +99,12 @@ float correctly_rounded_float(const wide::Wide exact) {
     return rounded;
 }
 
+struct ReferenceAnchor final {
+    double x{0.0};
+    double sine{0.0};
+    double cosine{0.0};
+};
+
 void check_reference() {
     Lcg lcg{7};
     double worst = 0.0;
@@ -110,11 +116,23 @@ void check_reference() {
         worst = std::max(worst, std::fabs(deviation.hi + deviation.lo));
     }
     require(worst < 1e-30, "reference: sin^2 + cos^2 departs from 1");
-    const double anchors[] = {0.5, 1.0, 2.0, 3.0, 1e-8, 100.0, 710.0};
-    for (const double x : anchors) {
-        const wide::WideSinCos r = wide::reference(x);
-        require(double_ulps(std::sin(x), r.s) < 1.0 && double_ulps(std::cos(x), r.c) < 1.0,
-                "reference: disagrees with the C++ library by an ulp or more");
+    // Recorded correctly rounded sin and cos, from a 420-digit Taylor series
+    // of the exact double input (not the host C library, which may differ by
+    // host). The reference rounds to within half an ulp of them, plus its own
+    // error far below 0.01 ulp.
+    const ReferenceAnchor anchors[] = {
+        {0.5, 0x1.eaee8744b05f0p-2, 0x1.c1528065b7d50p-1},
+        {1.0, 0x1.aed548f090ceep-1, 0x1.14a280fb5068cp-1},
+        {2.0, 0x1.d18f6ead1b446p-1, -0x1.aa22657537205p-2},
+        {3.0, 0x1.210386db6d55bp-3, -0x1.fae04be85e5d2p-1},
+        {1e-8, 0x1.5798ee2308c3ap-27, 0x1.0p+0},
+        {100.0, -0x1.03425b78c4db8p-1, 0x1.b981dbf665fdfp-1},
+        {710.0, 0x1.f9bd0303f6fafp-15, 0x1.fffffff063930p-1},
+    };
+    for (const ReferenceAnchor& anchor : anchors) {
+        const wide::WideSinCos r = wide::reference(anchor.x);
+        require(double_ulps(anchor.sine, r.s) < 0.51 && double_ulps(anchor.cosine, r.c) < 0.51,
+                "reference: disagrees with a recorded correctly rounded value");
     }
 }
 
