@@ -115,24 +115,14 @@ inline void sincos_rotate(const std::uint64_t index, const double r, const doubl
     c_lo = cos_tail;
 }
 
-// sincos_rotate for x on the fast path (2^-27 <= |x| <= 2^20).
-inline void sincos_wide(const double x, double& s_hi, double& s_lo, double& c_hi,
-                        double& c_lo) noexcept {
-    std::uint64_t index = 0;
-    const double q = sincos_step(x, index);
-    double r = 0.0;
-    double r_lo = 0.0;
-    sincos_remainder_wide(x, q, r, r_lo);
-    sincos_rotate(index, r, r_lo, s_hi, s_lo, c_hi, c_lo);
-}
-
 // ---- medium range: 2^20 < |x| <= 2^32 ------------------------------------------------
 //
 // Arguments above 2^32 are refused (NaN): no GUI.Forms use needs them, and
 // a phase that grows without bound must reset itself. Up to 2^32, |q| <
-// 2^38 and pi/128 in eight 15-bit parts keeps every q * part exact; the
-// ~173-bit sum keeps r exact to ~1e-46 absolute, far below any remainder a
-// double in this range can leave.
+// 2^38 and pi/128 in eight 15-bit parts plus a rest (~185 bits) keeps every
+// q * part exact; its error against the contract below is proved, not
+// sampled (tools/sincos_certificate.py). The fast path's small remainders
+// use the same reduction.
 
 inline constexpr double sincos_medium_limit = 0x1p32;
 inline constexpr std::uint64_t sincos_medium_low_bits = std::bit_cast<std::uint64_t>(sincos_fast_limit);
@@ -146,8 +136,10 @@ inline bool sincos_medium_path(const double x) noexcept {
 }
 
 // r = x - q*pi/128 as r + r_lo with |r_lo| <= ulp(r)/2, for the medium
-// range. x - q * part[0] is exact (Sterbenz); each later subtraction keeps
-// its rounding error by two-sum, and the errors join the low part.
+// range and the fast path's small remainders. x - q * part[0] is exact
+// (the certificate checks it by bit count and granularity); each later
+// subtraction keeps its rounding error by two-sum, and the errors join the
+// low part, whose own roundings are the only ones left besides q * rest.
 inline void sincos_remainder_medium(const double x, const double q, double& r,
                                     double& r_lo) noexcept {
     double head = x - q * sincos_medium_step[0];
@@ -161,6 +153,51 @@ inline void sincos_remainder_medium(const double x, const double q, double& r,
     }
     low -= q * sincos_medium_step_rest;
     two_sum(head, low, r, r_lo);
+}
+
+// The reduction's contract and the small-remainder path. Proved by
+// tools/sincos_certificate.py, which reads this file's constants and
+// sincos_table256.hpp's:
+//
+// - The rotation (sincos_rotate, every rounding and truncation counted by
+//   interval error analysis over all 256 indices) is within 0.00110 ulp of
+//   sin and cos, and tan's quotient within 0.00536 ulp, beyond the final
+//   rounding, for exact r + r_lo. Against the stated bound of 0.51 ulp
+//   (math.hpp) that leaves the reduction |delta| <= min(2^-59.86 |r|,
+//   2^-68.45) absolute: the first where sin, cos or tan vanishes at r = 0,
+//   the second near tan's poles elsewhere.
+// - The smallest |x - q pi/128| over every double 2^-27 <= |x| <= 2^32 with
+//   q != 0 is 2^-66.49 (computed per binade and residue class over every
+//   q, not sampled). Meeting the contract there needs pi/128 to 150 bits.
+// - The three-part split above holds pi/128 to ~133 bits and errs by at
+//   most 2^-89.88 for |x| <= 2^20: within the contract once |r| >= 2^-30
+//   (2^-30 is the smallest power of two for which it is).
+// - Below that, the eight-part split of the medium range (~185 bits, q *
+//   part exact for |q| < 2^38, which covers |x| <= 2^20 too) meets the
+//   contract at every binade's certified minimum.
+inline constexpr double sincos_small_remainder_limit = 0x1p-30;
+
+// q and r = x - q pi/128 as r + r_lo for the fast path (2^-27 <= |x| <=
+// 2^20), within the contract above: the three-part reduction, redone with
+// the eight parts when |r| < sincos_small_remainder_limit (about one input
+// in 2^24, where x lies within 2^-30 of a multiple of pi/128).
+inline double sincos_reduce_fast(const double x, std::uint64_t& index, double& r, double& r_lo) noexcept {
+    const double q = sincos_step(x, index);
+    sincos_remainder_wide(x, q, r, r_lo);
+    if (std::fabs(r) < sincos_small_remainder_limit) {
+        sincos_remainder_medium(x, q, r, r_lo);
+    }
+    return q;
+}
+
+// sincos_rotate for x on the fast path (2^-27 <= |x| <= 2^20).
+inline void sincos_wide(const double x, double& s_hi, double& s_lo, double& c_hi,
+                        double& c_lo) noexcept {
+    std::uint64_t index = 0;
+    double r = 0.0;
+    double r_lo = 0.0;
+    (void)sincos_reduce_fast(x, index, r, r_lo);
+    sincos_rotate(index, r, r_lo, s_hi, s_lo, c_hi, c_lo);
 }
 
 // sincos_rotate for x in the medium range.

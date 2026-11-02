@@ -352,6 +352,15 @@ if(STX_AUXLIB_BUILD_TOOLS)
                 -ffp-contract=off -fno-fast-math)
         endif()
     endforeach()
+    # The minimum-remainder search of tools/sincos_certificate.py (an ordered
+    # index from stx_btree; unsigned __int128, so Clang or GCC only).
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        add_executable(stx_auxlib_sincos_minimum_remainder tools/sincos_minimum_remainder.cpp)
+        target_compile_features(stx_auxlib_sincos_minimum_remainder PRIVATE cxx_std_20)
+        target_include_directories(stx_auxlib_sincos_minimum_remainder PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/btree/include)
+        target_link_libraries(stx_auxlib_sincos_minimum_remainder PRIVATE stx_auxlib::global_allocator)
+    endif()
 endif()
 
 install(TARGETS stx_auxlib stx_auxlib_global_allocator EXPORT stx_auxlibTargets

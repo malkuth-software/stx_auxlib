@@ -118,8 +118,11 @@ The math kernels' own gate (`stx_auxlib_math_tests --bench-gate`) is a
 report, not part of the failing matrix. On 2026-10-31 the owner accepted the
 math speeds as they stand, though a few ratios are still near or above 2x
 (double cbrt about 2.3x, double hypot about 2.1x, double log2 on wide ranges
-about 2.2x). Every float function is verified correctly rounded over all
-floats, except sin, cos and tan on 2^20 < |x| <= 2^32, which are sampled.
+about 2.2x). Every one-argument float function is verified correctly
+rounded over all floats against the test reference, except sin, cos and tan
+on 2^20 < |x| <= 2^32, which are sampled; pow, hypot and atan2 (two
+arguments) are sampled. Of the double bounds, only sin, cos and tan's are
+proved (see Mathematics); the others are measured over sampled inputs.
 
 ## Building
 
@@ -187,11 +190,28 @@ weekday names are left to translated language files, not to a C locale.
 
 `stx_auxlib::math::sincos(x, sine, cosine)` for `float` and `double` is a
 256-entry table with a cubic correction, giving the same bits on every host
-with or without FMA. Measured by its author: every `float` with
-2^-27 <= |x| <= 2^20 is correctly rounded (788,529,154 values, exhaustive);
-`double` is within 0.500415 ulp over 120 million inputs, against 0.87 for the
-host library; about 2.5 ns (`float`) and 5.5 ns (`double`) per pair against
-7–12 ns for `std::sin` plus `std::cos` on an A18 Pro.
+with or without FMA. Every `float` with 2^-27 <= |x| <= 2^20 is correctly
+rounded (788,529,154 values, checked exhaustively against the test
+reference). For `double`, sin, cos and `tan` are within 0.51 ulp at every
+double 2^-27 <= |x| <= 2^32, and that bound is proved, not sampled:
+`tools/sincos_certificate.py` finds the smallest remainder |x - q pi/128|
+of every binade (2^-66.49 at worst) over every q, bounds the rotation's
+error by interval analysis of every rounding (at most 0.0011 ulp for sin
+and cos, 0.0054 for tan), and bounds each reduction path's error from its
+exact constants; inputs within 2^-30 of a multiple of pi/128 take the
+eight-part reduction. The certified worst cases run in ctest
+(`tests/reference/sincos_worst_cases.hpp`). To rerun the certificate (about
+15 s), build with `STX_AUXLIB_BUILD_TOOLS=ON` and run
+`python3 tools/sincos_certificate.py --search
+<build>/stx_auxlib_sincos_minimum_remainder --check
+tests/reference/sincos_worst_cases.hpp`; it fails if any step, or the
+table, no longer holds. The 0.51 ulp bound is a stated budget (the
+coordinator's provisional choice, 2026-11-02), named once in the
+certificate as `STATED_BOUND_ULPS`. Measured over 120 million
+sampled inputs, the largest error is 0.500415 ulp, against 0.87 for the
+host library; about 2.5 ns (`float`) and 5.5 ns (`double`) per pair
+against 7–12 ns for `std::sin` plus `std::cos` on an A18 Pro (the
+author's measurement).
 
 `stx_auxlib::math::exp` for `float` and `double` owns its whole input
 range, overflow and gradual underflow included. Measured by its author:
@@ -235,9 +255,10 @@ against the host's 12.5 (`double`) and 3.7 (`float`), and `log` and `exp`
 about 6 ns against 2.5–7. A speed pass, `pow` and the `float` paths first,
 follows the remaining families.
 
-`tan` is within 0.5005 ulp for `double` (0.499996 in the sampled regions,
-about 0.003% misrounded in a wider probe, against the host's 2.7) and
-correctly rounded at sampled `float` values. `cbrt` and the six hyperbolic
+`tan` is within 0.51 ulp for `double`, proved as above (0.499996 in the
+sampled regions, about 0.003% misrounded in a wider probe, against the
+host's 2.7), and correctly rounded for every `float` up to 2^20
+(exhaustive against the test reference). `cbrt` and the six hyperbolic
 functions own every input (`acosh(1)` is +0, `atanh(±1)` is ±inf, NaN
 outside their domains), are within 0.500000 ulp at every sampled `double`
 (the host reaches 0.52–1.96), and are correctly rounded at sampled `float`

@@ -14,8 +14,10 @@
 
 #include "stx_auxlib/math.hpp"
 
+#include "reference/sincos_worst_cases.hpp"
 #include "reference/wide.hpp"
 #include "../src/checked.hpp"
+#include "../src/math/sincos_core.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -55,9 +57,11 @@ double double_ulps(const double approx, const wide::Wide exact) {
     return result;
 }
 
-// The measured bound is 0.500415 ulp over 120 million inputs; the test allows
-// a little margin for unmeasured inputs.
-constexpr double double_ulp_limit = 0.5005;
+// sin and cos of a double: the stated bound, proved for every double
+// 2^-27 <= |x| <= 2^32 by tools/sincos_certificate.py (the rotation's own
+// error is at most 0.0011 ulp; the reduction is held to the rest). Measured
+// worst over the sampled regions: 0.500415 ulp.
+constexpr double double_ulp_limit = sincos_worst_cases::stated_bound_ulps;
 // exp: measured 0.500001 ulp over 100 million inputs.
 constexpr double exp_ulp_limit = 0.5005;
 // log, log2, log10: measured 0.500000 ulp over 24 million inputs.
@@ -68,9 +72,11 @@ constexpr double pow_ulp_limit = 0.5005;
 constexpr double hypot_ulp_limit = 0.5005;
 // atan, atan2, asin, acos: measured 0.500000 ulp over 4 million inputs each.
 constexpr double inverse_trig_ulp_limit = 0.5005;
-// tan: measured 0.500154 ulp (sin and cos double-double tails combine in
-// the quotient); cbrt and the hyperbolic family: 0.500000 ulp.
-constexpr double tan_ulp_limit = 0.5005;
+// tan: the stated bound, proved like sincos' (the rotation and quotient
+// together at most 0.0054 ulp). Measured worst over the sampled regions:
+// 0.500154 ulp. cbrt and the hyperbolic family (remaining_ulp_limit):
+// measured 0.500000 ulp, sampled only.
+constexpr double tan_ulp_limit = sincos_worst_cases::stated_bound_ulps;
 constexpr double remaining_ulp_limit = 0.5005;
 
 // hi + lo rounded once to float.
@@ -210,6 +216,60 @@ void sincos_hard_reduction(const int count) {
     }
     std::printf("sincos(double) near k*pi/128 %10d inputs  max %.6f ulp at %a\n", count, worst, worst_x);
     require(worst <= double_ulp_limit, "sincos(double): hard reduction case above the stated bound");
+}
+
+// The certified worst cases (tests/reference/sincos_worst_cases.hpp, from
+// tools/sincos_certificate.py): for every binade and residue class, the
+// double nearest a multiple of pi/128. At each, and at its negation, the
+// reduction must deliver r + r_lo within the certificate's contract of the
+// exact remainder, and sin, cos and tan must be within the stated bound of
+// the exact values the certificate computed (not of the reference).
+void sincos_certified_worst_cases() {
+    namespace detail = stx_auxlib::math::detail;
+    int checked = 0;
+    for (const sincos_worst_cases::Case& entry : sincos_worst_cases::cases) {
+        for (int sign = 0; sign < 2; ++sign) {
+            const double flip = sign == 0 ? 1.0 : -1.0;
+            const double x = flip * entry.x;
+            std::uint64_t index = 0;
+            double r = 0.0;
+            double r_lo = 0.0;
+            double q = 0.0;
+            if (detail::sincos_fast_path(x)) {
+                q = detail::sincos_reduce_fast(x, index, r, r_lo);
+            } else {
+                q = detail::sincos_step(x, index);
+                detail::sincos_remainder_medium(x, q, r, r_lo);
+            }
+            require(q == flip * entry.q, "sincos worst case: the reduction chose another multiple");
+            const wide::Wide exact_remainder{flip * entry.remainder_hi, flip * entry.remainder_lo};
+            const wide::Wide difference = wide::add(wide::two_sum(r, r_lo), wide::negate(exact_remainder));
+            const double reduction_error = std::fabs(difference.hi + difference.lo);
+            const double allowed = std::min(sincos_worst_cases::contract_kappa * std::fabs(entry.remainder_hi),
+                                            sincos_worst_cases::contract_general);
+            if (reduction_error > allowed) {
+                std::fprintf(stderr, "x = %a: reduction error %a above the contract %a\n", x, reduction_error,
+                             allowed);
+            }
+            require(reduction_error <= allowed, "sincos worst case: reduction outside the certified contract");
+            double s = 0.0;
+            double c = 0.0;
+            stx_auxlib::math::sincos(x, s, c);
+            const double t = stx_auxlib::math::tan(x);
+            const double sin_error = double_ulps(s, wide::Wide{flip * entry.sin_hi, flip * entry.sin_lo});
+            const double cos_error = double_ulps(c, wide::Wide{entry.cos_hi, entry.cos_lo});
+            const double tan_error = double_ulps(t, wide::Wide{flip * entry.tan_hi, flip * entry.tan_lo});
+            if (sin_error > double_ulp_limit || cos_error > double_ulp_limit || tan_error > tan_ulp_limit) {
+                std::fprintf(stderr, "x = %a: sin %.6f cos %.6f tan %.6f ulp\n", x, sin_error, cos_error, tan_error);
+            }
+            require(sin_error <= double_ulp_limit && cos_error <= double_ulp_limit,
+                    "sincos worst case: above the stated bound");
+            require(tan_error <= tan_ulp_limit, "tan worst case: above the stated bound");
+            checked += 1;
+        }
+    }
+    std::printf("sincos(double), tan(double): %d certified worst cases within %.2f ulp\n", checked,
+                double_ulp_limit);
 }
 
 void double_accuracy(const int per_region) {
@@ -1740,6 +1800,7 @@ int main(const int argument_count, char** const arguments) {
         check_reference();
         special_values();
         determinism();
+        sincos_certified_worst_cases();
         double_accuracy(exhaustive ? 20000000 : 200000);
         sincos_hard_reduction(exhaustive ? 20000000 : 200000);
         float_rounding(exhaustive ? 1 : 97);
