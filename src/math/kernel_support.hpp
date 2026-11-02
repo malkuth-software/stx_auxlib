@@ -161,6 +161,21 @@ inline void two_product_split(const double a, const Split& a_parts, const double
 #endif
 }
 
+// two_product for a second factor b of at most 26 significant bits (a
+// table point such as j/128): a_hi * b and a_lo * b are then exact, a_hi * b
+// is within a factor two of the product (Sterbenz), and the error comes from
+// one split of a. Same bits as two_product(a, b, ...); the fused form is
+// unchanged.
+inline void two_product_narrow(const double a, const double b, double& product, double& error) noexcept {
+    product = a * b;
+#if defined(STX_AUXLIB_MATH_FMA)
+    error = __builtin_fma(a, b, -product);
+#else
+    const Split a_parts = veltkamp_split(a);
+    error = (a_parts.hi * b - product) + a_parts.lo * b;
+#endif
+}
+
 // 2^exponent for exponent in [-1022, 1023].
 inline double power_of_two(const std::int64_t exponent) noexcept {
     const std::uint64_t bits = static_cast<std::uint64_t>(exponent + exponent_bias) << 52;

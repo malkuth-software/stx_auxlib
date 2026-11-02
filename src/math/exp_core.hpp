@@ -130,7 +130,7 @@ inline void exp_pair(const double a, Wide& plus, Wide& minus) noexcept {
     const ExpEntry& up = exp_table_256[index];
     double up_rotation = 0.0;
     double up_rotation_error = 0.0;
-    two_product(up.hi, r, up_rotation, up_rotation_error);
+    two_product_split(up.hi, exp_splits.values[index], r, up_rotation, up_rotation_error);
     double up_head = 0.0;
     double up_head_error = 0.0;
     fast_two_sum(up.hi, up_rotation, up_head, up_head_error);  // |T| >= 1 > |T r|
@@ -146,7 +146,7 @@ inline void exp_pair(const double a, Wide& plus, Wide& minus) noexcept {
     const ExpEntry& down = exp_table_256[down_index];
     double down_rotation = 0.0;
     double down_rotation_error = 0.0;
-    two_product(down.hi, -r, down_rotation, down_rotation_error);
+    two_product_split(down.hi, exp_splits.values[down_index], -r, down_rotation, down_rotation_error);
     double down_head = 0.0;
     double down_head_error = 0.0;
     fast_two_sum(down.hi, down_rotation, down_head, down_head_error);
