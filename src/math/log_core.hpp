@@ -186,8 +186,8 @@ STX_AUXLIB_MODULAR inline void log_cheap(const LogBase& base, const std::uint64_
     error = std::fabs(value) * relative;
 }
 
-// log x = head + tail from log_z (~2^-69 relative): pow's first attempt,
-// which pow accepts only when its rounding test passes.
+// log x = head + tail from log_z (~2^-69 relative), for the hyperbolic
+// functions.
 inline void log_natural_plain(const std::uint64_t bits, const double exponent_adjust, double& head,
                               double& tail) noexcept {
     double k = 0.0;
@@ -198,70 +198,6 @@ inline void log_natural_plain(const std::uint64_t bits, const double exponent_ad
     // k * log_ln2_hi is exact and dominates |log z| <= 0.35 (or k = 0).
     fast_two_sum(k * kernel_constants.log_ln2_hi, logz_head, head, head_error);
     tail = head_error + (logz_tail + k * kernel_constants.log_ln2_lo);
-}
-
-// 1/3 as a double-double (1/3 - double(1/3) = 2^-54 / 3).
-inline constexpr double one_third_hi = 1.0 / 3.0;
-inline constexpr double one_third_lo = 0x1.5555555555555p-56;
-
-// log x = head + tail to ~1e-24 relative, for pow, where an error in log x
-// is multiplied by |y * log x| (up to 709). As log_z, but with two more
-// polynomial terms, and r^3 * (1/3 - r/4 + ...) formed as a double-double
-// that joins the head exactly; log_z's ~1e-21 suffices for log alone.
-// Modular by design: offset = bits - log_offset_bits wraps (as unsigned
-// 64-bit arithmetic) for z below the table's base, and its arithmetic shift
-// then yields k < 0; bits - (offset & exponent_field) undoes it modulo 2^64.
-STX_AUXLIB_MODULAR STX_AUXLIB_MATH_OUTLINE inline void log_natural_wide(const std::uint64_t bits, const double exponent_adjust, double& head,
-                             double& tail) noexcept {
-    const std::uint64_t offset = bits - log_offset_bits;
-    const std::uint64_t index = (offset >> 45) & log_index_mask;
-    const std::int64_t k_bits = static_cast<std::int64_t>(offset) >> 52;
-    const double k = static_cast<double>(k_bits) - exponent_adjust;
-    const double z = std::bit_cast<double>(bits - (offset & exponent_field));
-    const LogEntry& entry = log_table_128[index];
-    double product = 0.0;
-    double r_lo = 0.0;
-    two_product_split(entry.inv, log_splits.values[index], z, product, r_lo);
-    const double r = product - 1.0;  // exact
-    double r_squared = 0.0;
-    double r_squared_error = 0.0;
-    two_product(r, r, r_squared, r_squared_error);
-    const double half_r_squared = r_squared * 0.5;  // exact
-    // cubic = r^3 * (1/3 + r * rest) as cubic_hi + cubic_lo.
-    // Two more terms than log_z: truncation r^11/11 ~ 3e-28, against log_z's
-    // r^9/9 ~ 2e-23 (5e-21 relative to a result near 0.004).
-    const double rest =
-        kernel_constants.log_4 + r * (kernel_constants.log_5 + r * (kernel_constants.log_6 + r * (kernel_constants.log_7 + r * (kernel_constants.log_8 + r * (kernel_constants.log_9 + r * kernel_constants.log_10)))));
-    double r_rest = 0.0;
-    double r_rest_error = 0.0;
-    two_product(r, rest, r_rest, r_rest_error);
-    double factor = 0.0;
-    double factor_error = 0.0;
-    two_sum(kernel_constants.one_third_hi, r_rest, factor, factor_error);
-    const double factor_lo = factor_error + (r_rest_error + kernel_constants.one_third_lo);
-    double r_cubed = 0.0;
-    double r_cubed_error = 0.0;
-    two_product(r, r_squared, r_cubed, r_cubed_error);
-    const double r_cubed_lo = r_cubed_error + r * r_squared_error;
-    double cubic_hi = 0.0;
-    double cubic_error = 0.0;
-    two_product(r_cubed, factor, cubic_hi, cubic_error);
-    const double cubic_lo = cubic_error + (r_cubed * factor_lo + r_cubed_lo * factor);
-    // Head: k*ln2_hi + logc_hi + r - r^2/2 + cubic_hi, each sum exact.
-    double sum = 0.0;
-    double sum_error = 0.0;
-    two_sum(entry.logc_hi, r, sum, sum_error);
-    double sum2 = 0.0;
-    double sum2_error = 0.0;
-    two_sum(sum, -half_r_squared, sum2, sum2_error);
-    double logz = 0.0;
-    double logz_error = 0.0;
-    two_sum(sum2, cubic_hi, logz, logz_error);
-    double head_error = 0.0;
-    two_sum(k * kernel_constants.log_ln2_hi, logz, head, head_error);  // k * kernel_constants.log_ln2_hi is exact
-    const double r_lo_scaled = r_lo * (1.0 - r * (1.0 - r * (1.0 - r)));
-    const double small = (entry.logc_lo + r_lo_scaled) + (cubic_lo - r_squared_error * 0.5);
-    tail = ((sum_error + sum2_error) + (logz_error + head_error)) + (small + k * kernel_constants.log_ln2_lo);
 }
 
 } // namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT::detail

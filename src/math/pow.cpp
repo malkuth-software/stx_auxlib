@@ -1,18 +1,37 @@
 // pow (declared, with its contracts, in stx_auxlib/math.hpp).
 //
-// x^y = e^(y * log x) for positive finite x: log x as a double-double
-// (log_core.hpp: first the plain core, ~2^-69 relative, and the precise
-// one, ~1e-24, only when a rounding test cannot certify the plain result),
-// y * log x formed exactly as p + p_lo
-// (two_product), and e^(p + p_lo) from the exp core with full-range scaling
-// (exp_core.hpp). An error e in log x becomes |y * log x| * e in the result,
-// at most 709 * 1e-21 ~ 0.006 ulp. Negative x with integer y takes the sign
-// of the integer's parity; every other special input follows C99 Annex F.
+// x^y = 2^(y * log2 x) for positive finite x, in one pass with no rounding
+// test (the owner's log2 formulation, adopted 2026-11-02). One formulation
+// on every tier: the exact products are FMA or Dekker's, with the same bits.
+//
+//   log2 x = (k + H_i) + s + s_lo
+// with x = 2^k z, the log table's bucket i (log_core.hpp: r = z inv_i - 1,
+// |r| <= 2^-8, exact as r + r_lo), H_i = -log2(inv_i) cut to a multiple of
+// 2^-41 so that k + H_i is exact, s = log1p(r) / ln 2 rounded and s_lo
+// carrying its error with mid_i = -log2(inv_i) - H_i. Then
+//   p + p_lo = y (k + H_i) + y s + y s_lo
+// from two exact products and an exact sum, and 2^(p + p_lo) =
+// 2^e 2^(j/256) e^(t ln 2) with q = round(256 p) = 256 e + j and
+// t = p - q/256 exact (|t| <= 2^-9), from the exp table and a degree-6
+// polynomial.
+//
+// Error bound (dev/x86/pow_bound.py in the hot-paths record): the absolute
+// error of log2 x is below 2^-66.6 |log2 x| (worst in buckets 80 and 81,
+// where log2 x is smallest; bucket 80 has inv = 1 and H = 0, so x near 1
+// does not cancel), which p carries times |y|: below 2^-56.2 absolute for
+// |p| <= 1076; the exp side adds 2^-70.7 relative. In all, 2^-56.7 relative
+// before the final rounding: within 0.5 + 0.076 ulp. MPFR measures
+// 2^-68.2 and 2^-58.9 for the two (the worst result 0.5027 ulp in 2 x 10^6
+// inputs over five regions). Subnormal results round once on the subnormal
+// grid (scale_wide), where the same relative error is at most 0.038 of the
+// subnormal ulp. Negative x with integer y takes the sign of the integer's
+// parity; every other special input follows C99 Annex F.
 
 #include "stx_auxlib/math.hpp"
 
 #include "exp_core.hpp"
 #include "log_core.hpp"
+#include "log_table128.hpp"
 
 #include <limits>
 
@@ -52,72 +71,135 @@ constexpr double pow2_c1 = 0.6931471805599453;
 constexpr double pow2_c2 = 0.2402265069591007;
 constexpr double pow2_c3 = 0.05550410866482158;
 
-constexpr double pow_overflow_limit = 709.79;   // e^p above it is infinite
-constexpr double pow_underflow_limit = -746.0;  // e^p below it rounds to +0
+// The pow limits, in log2 units. Above 1024.5 the result is at least
+// 2^1024.49 and rounds to infinity; below -1076 it is under 2^-1075.99 and
+// rounds to +0. Between them the exponent e = floor(q / 256) lies in
+// [-1077, 1024], inside scale_wide's range: e = 1024 scales in two steps
+// (an overflow rounds once), and results below 2^-1022 round once on the
+// subnormal grid. p is +-infinity (p_error NaN) when y (k + H) overflows;
+// the limits decide those before p_error is used.
+constexpr double pow_overflow_limit = 1024.5;
+constexpr double pow_underflow_limit = -1076.0;
 
-// Bound on the relative error of e^(y log x) built from log_natural_plain:
-// log_z is within ~2^-69 of log x (measured 1.2e-5 ulp), which the product
-// with y turns into |p| * 2^-69 absolute in p; the exp core adds ~2^-72.
-// The test below uses (|p| + 1) * 2^-66, a factor 8 of margin.
-constexpr double pow_plain_error = 0x1p-66;
+// H_i + mid_i = -log2(inv_i) for each log bucket: H_i a multiple of 2^-41,
+// so k + H_i is exact (|k| <= 1075 takes 11 bits above the point, H_i 41
+// below), and |mid_i| <= 2^-42.
+struct Log2Entry final {
+    double head{0.0};
+    double mid{0.0};
+};
 
-// True when head + tail (head in [0.5, 4), the unscaled exp core result)
-// carries a relative error below `relative` and still rounds to the same
-// double as the exact value: the exact value cannot reach a rounding
-// midpoint. Only for normal results (exponent in [-1021, 1022]).
-bool rounds_safely(const double head, const double tail, const std::int64_t exponent,
-                   const double relative) noexcept {
-    const std::uint64_t normal_offset = static_cast<std::uint64_t>(exponent + 1021);
-    if (normal_offset > 2043) return false;
-    double rounded = 0.0;
-    double residual = 0.0;
-    two_sum(head, tail, rounded, residual);
-    const std::uint64_t bits = std::bit_cast<std::uint64_t>(rounded);
-    const double gap_up = std::bit_cast<double>(bits + 1) - rounded;
-    const double gap_down = rounded - std::bit_cast<double>(bits - 1);
-    const double half_gap = std::fmin(gap_up, gap_down) * 0.5;
-    const bool result = std::fabs(residual) + relative * rounded < half_gap;
-    return result;
+struct Log2Table final {
+    Log2Entry values[128];
+};
+
+// From the log table's -log(inv) = logc_hi + logc_lo (error ~1e-32) times
+// 1/ln 2 as a double-double: the product's error is near 2^-105, against
+// 2^-95 for mid's own rounding. Dekker's product, written out because
+// two_product is not constexpr; constant evaluation rounds as the run time
+// does.
+constexpr Log2Table make_log2_table() noexcept {
+    Log2Table table{};
+    const Split inverse_ln2_parts = veltkamp_split(log_inv_ln2_hi);
+    for (int i = 0; i < 128; ++i) {
+        const LogEntry& entry = log_table_128[i];
+        const Split logc_parts = veltkamp_split(entry.logc_hi);
+        const double product = entry.logc_hi * log_inv_ln2_hi;
+        const double product_error =
+            ((logc_parts.hi * inverse_ln2_parts.hi - product) + logc_parts.hi * inverse_ln2_parts.lo +
+             logc_parts.lo * inverse_ln2_parts.hi) +
+            logc_parts.lo * inverse_ln2_parts.lo;
+        const double low = product_error + (entry.logc_hi * log_inv_ln2_lo + entry.logc_lo * log_inv_ln2_hi);
+        // Round to a multiple of 2^-41: |product| * 2^41 < 2^40, so the
+        // shift leaves the nearest integer.
+        const double scaled = product * 0x1p41 + rounding_shift;
+        const double head = (scaled - rounding_shift) * 0x1p-41;
+        const double mid = (product - head) + low;  // product - head is exact
+        table.values[i] = Log2Entry{head, mid};
+    }
+    return table;
 }
 
+alignas(64) constexpr Log2Table log2_table = make_log2_table();
+
 // x^y for positive finite x (normal or subnormal) and finite nonzero y.
-// First from the plain log (2.4 ns); when the rounding test cannot certify
-// that result, again from the precise log (4.5 ns). A certified plain result
-// is the correctly rounded value, which the precise path also returns
-// there, so the bits do not depend on which path ran.
-double pow_positive(const double x, const double y) noexcept {
+// Modular by design: the log table's offset arithmetic (see log_core.hpp).
+STX_AUXLIB_MODULAR double pow_positive(const double x, const double y) noexcept {
     double scaled = x;
     double exponent_adjust = 0.0;
     if (x < 0x1p-1022) {
         scaled = x * 0x1p52;  // subnormal: exact scaling into the normal range
         exponent_adjust = 52.0;
     }
+    // log2 x: x = 2^k z, r + r_lo = z inv - 1 exactly.
     const std::uint64_t bits = std::bit_cast<std::uint64_t>(scaled);
-    double log_head = 0.0;
-    double log_tail = 0.0;
-    log_natural_plain(bits, exponent_adjust, log_head, log_tail);
+    const std::uint64_t offset = bits - log_offset_bits;
+    const std::uint64_t index = (offset >> 45) & log_index_mask;
+    const std::int64_t k_bits = static_cast<std::int64_t>(offset) >> 52;
+    const double k = static_cast<double>(k_bits) - exponent_adjust;
+    const double z = std::bit_cast<double>(bits - (offset & exponent_field));
+    const LogEntry& entry = log_table_128[index];
+    double product = 0.0;
+    double r_lo = 0.0;
+    two_product_split(entry.inv, log_splits.values[index], z, product, r_lo);
+    const double r = product - 1.0;  // exact: product is within 2^-7 of 1
+    // log1p(r + r_lo) = a + a_lo: r - r^2/2 exactly, the rest below r^3/3.
+    double r_squared = 0.0;
+    double r_squared_error = 0.0;
+    two_product(r, r, r_squared, r_squared_error);
+    const double cubic =
+        (r * r_squared) * (kernel_constants.log_3 + r * (kernel_constants.log_4 + r * (kernel_constants.log_5 + r * (kernel_constants.log_6 + r * (kernel_constants.log_7 + r * (kernel_constants.log_8 + r * (kernel_constants.log_9 + r * kernel_constants.log_10)))))));
+    double a = 0.0;
+    double a_error = 0.0;
+    fast_two_sum(r, -(r_squared * 0.5), a, a_error);  // |r| >= r^2/2
+    const double r_lo_scaled = r_lo * (1.0 - r * (1.0 - r * (1.0 - r)));
+    const double a_lo = a_error + (r_lo_scaled + (cubic - r_squared_error * 0.5));
+    // s + s_lo = (a + a_lo) / ln 2 + mid.
+    double s = 0.0;
+    double s_error = 0.0;
+    two_product(a, kernel_constants.inverse_ln2_hi, s, s_error);
+    const Log2Entry& log2_entry = log2_table.values[index];
+    const double s_lo = s_error + ((a * kernel_constants.inverse_ln2_lo + a_lo * kernel_constants.inverse_ln2_hi) + log2_entry.mid);
+    // p + p_lo = y (k + H) + y s + y s_lo.
+    const double whole = k + log2_entry.head;  // exact
+    double big = 0.0;
+    double big_error = 0.0;
+    two_product(y, whole, big, big_error);
+    double small = 0.0;
+    double small_error = 0.0;
+    two_product(y, s, small, small_error);
     double p = 0.0;
     double p_error = 0.0;
-    two_product(y, log_head, p, p_error);
-    // p is +-infinity (and p_error NaN) when y * log x overflows; the limits
-    // below decide those before p_lo is used.
+    two_sum(big, small, p, p_error);
     if (p > pow_overflow_limit) return std::numeric_limits<double>::infinity();
     if (p < pow_underflow_limit) return 0.0;
-    double p_lo = p_error + y * log_tail;
+    const double p_lo = p_error + ((big_error + small_error) + y * s_lo);
+    // q = round(256 p) = 256 e + j; t + t_lo = p + p_lo - q/256.
+    const double shifted = p * 256.0 + kernel_constants.rounding_shift;
+    const std::int64_t q_bits = std::bit_cast<std::int64_t>(shifted) -
+                                std::bit_cast<std::int64_t>(kernel_constants.rounding_shift);
+    const std::uint64_t j = static_cast<std::uint64_t>(q_bits) & exp_index_mask;
+    const std::int64_t exponent = q_bits >> 8;  // floor(q / 256): an arithmetic shift in C++20
+    const double t_head = p - (shifted - kernel_constants.rounding_shift) * (1.0 / 256.0);  // exact
+    double t = 0.0;
+    double t_lo = 0.0;
+    two_sum(t_head, p_lo, t, t_lo);
+    // u + u_lo = (t + t_lo) ln 2; e^u - 1 - u to u^6/720 (truncation 2^-70.7).
+    double u = 0.0;
+    double u_error = 0.0;
+    two_product(t, kernel_constants.ln2_hi, u, u_error);
+    const double u_lo = u_error + (t * kernel_constants.ln2_lo + t_lo * kernel_constants.ln2_hi);
+    const double polynomial_tail =
+        (u * u) * (exp_2 + u * (kernel_constants.exp_3 + u * (kernel_constants.exp_4 + u * (kernel_constants.exp_5 + u * kernel_constants.exp_6))));
+    // 2^(j/256) e^u = T_hi + T_hi u + [T_hi (e^u - 1 - u + u_lo) + T_lo (1 + u)].
+    const ExpEntry& power = exp_table_256[j];
+    double rotation = 0.0;
+    double rotation_error = 0.0;
+    two_product(power.hi, u, rotation, rotation_error);
     double head = 0.0;
-    double tail = 0.0;
-    std::int64_t exponent = 0;
-    exp_core(p, p_lo, head, tail, exponent);
-    if (rounds_safely(head, tail, exponent, (std::fabs(p) + 1.0) * pow_plain_error)) {
-        const double result = scale_wide(head, tail, exponent);
-        return result;
-    }
-    log_natural_wide(bits, exponent_adjust, log_head, log_tail);
-    two_product(y, log_head, p, p_error);
-    if (p > pow_overflow_limit) return std::numeric_limits<double>::infinity();
-    if (p < pow_underflow_limit) return 0.0;
-    p_lo = p_error + y * log_tail;
-    exp_core(p, p_lo, head, tail, exponent);
+    double head_error = 0.0;
+    fast_two_sum(power.hi, rotation, head, head_error);  // |T| >= 1 > |T u|
+    const double tail = head_error + (rotation_error + (power.hi * (polynomial_tail + u_lo) + (power.lo + power.lo * u)));
     const double result = scale_wide(head, tail, exponent);
     return result;
 }

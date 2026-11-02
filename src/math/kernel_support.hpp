@@ -26,16 +26,6 @@
 #define STX_AUXLIB_MATH_COLD
 #endif
 
-// Keeps a large hot helper out of line where inlining it into its one caller
-// costs more than the call: pow's log_natural_wide, inlined, left
-// pow_positive with more live values than registers (measured on Zen 4: the
-// avx2_fma pow double at 45-51 ns inlined, 25-35 ns called).
-#if defined(__GNUC__) || defined(__clang__)
-#define STX_AUXLIB_MATH_OUTLINE __attribute__((noinline))
-#else
-#define STX_AUXLIB_MATH_OUTLINE
-#endif
-
 // The tables (generated, *_table*.hpp) and kernel_constants are data,
 // shared by every variant in stx_auxlib::math::detail.
 namespace stx_auxlib::math::detail {
@@ -73,8 +63,8 @@ inline void fast_two_sum(const double a, const double b, double& sum, double& er
 // a * b + c for certified cheap paths only: a fused multiply-add where the
 // hardware has one (one rounding, shorter dependency chains), a multiply
 // and an add otherwise (two roundings). The value can differ between those
-// builds, but cheap paths return a result only after float_if_certain or
-// rounds_safely proves it the correctly rounded one -- the same value in
+// builds, but cheap paths return a result only after float_if_certain
+// proves it the correctly rounded one -- the same value in
 // either build -- and their error bounds already allow two roundings. Never
 // use it where a result is returned uncertified. STX_AUXLIB_MATH_DEKKER
 // selects the multiply-and-add form, so the Dekker test build checks that

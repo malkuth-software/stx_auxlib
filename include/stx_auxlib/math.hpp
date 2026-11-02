@@ -69,9 +69,10 @@ void sincos(double x, double& s, double& c) noexcept;
 // otherwise) and takes the sign of the integer's parity; zero and infinite
 // x and infinite y give the Annex F zeros and infinities. Exactly
 // representable results (2^n, 3^2, 10^n for n <= 22, x^1, ...) are exact.
-// Double: within 0.499996 ulp over 500,000 sampled inputs across the range,
-// subnormal results correctly rounded. Float: correctly rounded at every
-// sampled pair (the double result rounded once).
+// Double: within 0.5 + 0.076 ulp by analysis of every rounding (the same
+// bound, in subnormal ulps, for subnormal results); measured 0.5027 ulp at
+// worst over 2 million inputs, the same bits at every SIMD level. Float:
+// correctly rounded at every sampled pair (the double result rounded once).
 [[nodiscard]] double pow(double x, double y) noexcept;
 [[nodiscard]] float pow(float x, float y) noexcept;
 
