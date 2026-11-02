@@ -45,6 +45,32 @@ constexpr ExpSplits make_exp_splits() noexcept {
 
 alignas(64) inline constexpr ExpSplits exp_splits = make_exp_splits();
 
+// The table heads cut for exp_core's rotation (the owner's 26-bit split,
+// kernel_support.hpp's cut_26): t1 = cut_26(T_hi) and t2 = (T_hi - t1) +
+// T_lo (T_hi - t1 exact; adding T_lo rounds at about 2^-79 of T), so that
+// t1 + t2 is T_hi + T_lo. Built at compile time.
+struct ExpCut final {
+    double t1{0.0};
+    double t2{0.0};
+};
+
+struct ExpCuts final {
+    ExpCut values[256];
+};
+
+constexpr ExpCuts make_exp_cuts() noexcept {
+    ExpCuts table{};
+    for (int i = 0; i < 256; ++i) {
+        const ExpEntry& entry = exp_table_256[i];
+        const double t1 = cut_26(entry.hi);
+        const double t2 = (entry.hi - t1) + entry.lo;
+        table.values[i] = ExpCut{t1, t2};
+    }
+    return table;
+}
+
+alignas(64) inline constexpr ExpCuts exp_cuts = make_exp_cuts();
+
 // True when |x| <= exp_fast_limit, false for NaN.
 inline bool exp_fast_path(const double x) noexcept {
     const std::uint64_t magnitude = std::bit_cast<std::uint64_t>(x) & magnitude_mask;
@@ -69,12 +95,18 @@ inline double exp_step(const double x, std::uint64_t& index,
 
 // e^(x + x_lo) = (head + tail) * 2^exponent for |x| <= 746, with head + tail
 // carrying ~1e-21 relative error and |tail| below an ulp of head. x_lo is a
-// low part below ulp(x) (0 for exp itself; pow passes y * log x as x + x_lo).
+// low part below ulp(x) (0 for exp and the hyperbolic functions).
 //
-// With T = 2^(j/256) = T_hi + T_lo and r = x - q*ln2/256 as r + r_lo:
-//   e^x / 2^k = T_hi + T_hi*r + [T_hi*(e^r - 1 - r + r_lo) + T_lo*(1 + r)]
-// The leading two terms are summed exactly (two_product, two_sum); the
-// bracket is ~r^2 times the result.
+// With T = 2^(j/256) = T_hi + T_lo, r = x - q*ln2/256 as r + r_lo, and the
+// owner's 26-bit split (adopted 2026-11-02; t1, t2 from exp_cuts, r_head =
+// cut_26(r), r_rest = r - r_head exact):
+//   e^x / 2^k = T_hi + t1*r_head + [(t1*r_rest + t2*r) + T_hi*(e^r - 1 - r + r_lo) + T_lo]
+// t1*r_head is exact and joins T_hi exactly (fast two-sum). The bracket's cross
+// terms are below 2^-24 |T r| <= 2^-32.4 (|r| <= 2^-9.4 with margin, T < 2):
+// their three roundings and t2's own (below 2^-79 |T| times |r|) add at most
+// 2^-83.4 relative, against the ~1e-21 (2^-69.8) of the rest of the core,
+// which is unchanged. The exact product it replaces erred by zero, so the
+// bound grows by under 2^-83 relative: below 1e-9 ulp of the result.
 inline void exp_core(const double x, const double x_lo, double& head, double& tail,
                      std::int64_t& exponent) noexcept {
     std::uint64_t index = 0;
@@ -94,13 +126,14 @@ inline void exp_core(const double x, const double x_lo, double& head, double& ta
         (r * r) * (exp_2 + r * (kernel_constants.exp_3 + r * (kernel_constants.exp_4 + r * (kernel_constants.exp_5 + r * kernel_constants.exp_6))));
     const ExpEntry& entry = exp_table_256[index];
 
-    double rotation = 0.0;
-    double rotation_error = 0.0;
-    two_product_split(entry.hi, exp_splits.values[index], r, rotation, rotation_error);
+    const ExpCut& cut = exp_cuts.values[index];
+    const double r_head = cut_26(r);
+    const double r_rest = r - r_head;  // exact
     double head_error = 0.0;
-    fast_two_sum(entry.hi, rotation, head, head_error);  // |T| >= 1 > |T r|
-    const double small = entry.hi * (polynomial_tail + r_lo) + (entry.lo + entry.lo * r);
-    tail = head_error + (rotation_error + small);
+    fast_two_sum(entry.hi, cut.t1 * r_head, head, head_error);  // t1 r_head exact; |T| >= 1 > |T r|
+    const double cross = cut.t1 * r_rest + cut.t2 * r;
+    const double small = entry.hi * (polynomial_tail + r_lo) + entry.lo;
+    tail = head_error + (cross + small);
 }
 
 // e^a and e^-a together for 0 <= a <= 37, each as an unnormalized

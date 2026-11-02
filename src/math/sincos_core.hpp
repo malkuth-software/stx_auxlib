@@ -36,20 +36,8 @@ inline constexpr double tan_7 = 17.0 / 315.0;
 inline constexpr double tan_9 = 62.0 / 2835.0;
 inline constexpr double tan_11 = 1382.0 / 155925.0;
 
-// The owner's 26-bit split (adopted 2026-11-02): a double cut to its leading
-// 26 significant bits (the low 27 significand bits cleared, toward zero), so
-// that the product of two cut values (52 bits) is exact as a plain multiply.
-// The rest, value - cut_26(value), is exact and below 2^-25 |value|. No
-// exact product (two_product) remains in the rotation, so every tier runs
-// the same operations and returns the same bits, without Dekker's product
-// where there is no fused multiply-add.
-inline constexpr std::uint64_t cut_26_mask = ~((std::uint64_t{1} << 27) - 1);
-
-constexpr double cut_26(const double value) noexcept {
-    const std::uint64_t bits = std::bit_cast<std::uint64_t>(value) & cut_26_mask;
-    const double result = std::bit_cast<double>(bits);
-    return result;
-}
+// The table and r are cut with kernel_support.hpp's cut_26 (the owner's
+// 26-bit split): the rotation uses no exact product.
 
 // Each table entry's sine and cosine cut: s1 = cut_26(S) and s2 = (S - s1) +
 // S_lo (S - s1 exact; adding S_lo rounds at about 2^-80 of S), so s1 + s2 is
