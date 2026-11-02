@@ -59,14 +59,16 @@ struct Features final {
 //
 // Requests, in order: request_level() before the first call, then the
 // environment variable STX_SIMD_LEVEL (scalar, vector128 or avx2_fma) read at
-// the first call. A request above the hardware level is lowered to it: a test
+// the first call through stx_auxlib/environment.hpp. A request above the hardware level is lowered to it: a test
 // that forces avx2_fma on an SSE2-only machine runs vector128, and can see
 // that from selected_level(). An unrecognised value is ignored.
 [[nodiscard]] Level selected_level() noexcept;
 
-// Asks for `level` before selection happens. Returns false, and changes
-// nothing, once selected_level() has fixed the level. A program-level
-// override for tests and benchmarks; libraries never call it.
+// Asks for `level` before selection happens; a later request replaces an
+// earlier one. Returns false, and changes nothing, once selected_level() has
+// fixed the level (a request racing the first selection either lands before
+// it and is honoured, or is refused), or for a value outside Level. A
+// program-level override for tests and benchmarks; libraries never call it.
 bool request_level(Level level) noexcept;
 
 // "scalar", "sse2-128", "neon-128" or "avx2-fma-256" (BFFT's names).

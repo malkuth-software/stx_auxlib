@@ -4,10 +4,12 @@
 
 #include "stx_auxlib/simd.hpp"
 
+#include "stx_auxlib/environment.hpp"
+
 #include <atomic>
 #include <cstdint>
-#include <cstdlib>
-#include <cstring>
+#include <cstddef>
+#include <string>
 
 #if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
 #include <cpuid.h>
@@ -88,24 +90,46 @@ Level level_of(const Features& features) noexcept {
     return Level::scalar;
 }
 
-// No level requested or selected yet.
+// The selection state, one atomic word so that a request and the selection
+// cannot disagree: `unset`, a request (requested_offset + level) or the
+// selected level itself (0 to 2). A request can replace a request; nothing
+// replaces a selection.
 constexpr int unset = -1;
+constexpr int requested_offset = 16;
 
-std::atomic<int> requested{unset};
-std::atomic<int> selected{unset};
+std::atomic<int> selection{unset};
 
+bool is_selected(const int state) noexcept {
+    const bool result = state >= static_cast<int>(Level::scalar) && state <= static_cast<int>(Level::avx2_fma);
+    return result;
+}
+
+bool is_requested(const int state) noexcept {
+    const bool result = state >= requested_offset + static_cast<int>(Level::scalar) &&
+                        state <= requested_offset + static_cast<int>(Level::avx2_fma);
+    return result;
+}
+
+// STX_SIMD_LEVEL, read through the library's environment service, which
+// serializes with stx_auxlib::set_variable (the host's getenv does not).
+// The limit refuses any longer value before it is copied, so the value stays
+// in the string's inline storage; the Windows backend's short conversion
+// buffers can still allocate, and failing to is fatal here (noexcept), as
+// for any exhaustion of the interface's own structures.
 int level_from_environment() noexcept {
-    const char* value = std::getenv("STX_SIMD_LEVEL");
-    if (value == nullptr) {
+    constexpr std::size_t value_limit = 15;
+    std::string value;
+    const EnvironmentStatus status = read_variable("STX_SIMD_LEVEL", value_limit, value);
+    if (status != EnvironmentStatus::ok) {
         return unset;
     }
-    if (std::strcmp(value, "scalar") == 0) {
+    if (value == "scalar") {
         return static_cast<int>(Level::scalar);
     }
-    if (std::strcmp(value, "vector128") == 0) {
+    if (value == "vector128") {
         return static_cast<int>(Level::vector128);
     }
-    if (std::strcmp(value, "avx2_fma") == 0) {
+    if (value == "avx2_fma") {
         return static_cast<int>(Level::avx2_fma);
     }
     return unset;
@@ -125,30 +149,34 @@ Level hardware_level() noexcept {
 }
 
 Level selected_level() noexcept {
-    const int current = selected.load(std::memory_order_acquire);
-    if (current != unset) {
-        return static_cast<Level>(current);
+    int state = selection.load(std::memory_order_acquire);
+    // Loops only when another thread changed the state in between: a newer
+    // request is honoured, a selection is adopted.
+    while (!is_selected(state)) {
+        const int hardware = static_cast<int>(hardware_level());
+        const int wanted = is_requested(state) ? state - requested_offset : level_from_environment();
+        const int chosen = (wanted == unset || wanted > hardware) ? hardware : wanted;
+        if (selection.compare_exchange_weak(state, chosen, std::memory_order_acq_rel,
+                                            std::memory_order_acquire)) {
+            return static_cast<Level>(chosen);
+        }
     }
-    const int hardware = static_cast<int>(hardware_level());
-    int wanted = requested.load(std::memory_order_acquire);
-    if (wanted == unset) {
-        wanted = level_from_environment();
-    }
-    const int chosen = (wanted == unset || wanted > hardware) ? hardware : wanted;
-    int expected = unset;
-    if (selected.compare_exchange_strong(expected, chosen, std::memory_order_acq_rel)) {
-        return static_cast<Level>(chosen);
-    }
-    // Another thread selected first; its choice stands.
-    return static_cast<Level>(expected);
+    return static_cast<Level>(state);
 }
 
 bool request_level(const Level level) noexcept {
-    if (selected.load(std::memory_order_acquire) != unset) {
-        return false;
+    const int value = static_cast<int>(level);
+    if (!is_selected(value)) {
+        return false;  // not a Level enumerator
     }
-    requested.store(static_cast<int>(level), std::memory_order_release);
-    return true;
+    int state = selection.load(std::memory_order_acquire);
+    while (!is_selected(state)) {
+        if (selection.compare_exchange_weak(state, requested_offset + value, std::memory_order_acq_rel,
+                                            std::memory_order_acquire)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 const char* level_name(const Level level) noexcept {
