@@ -33,7 +33,7 @@ would replace it whole.
 | `precedence.hpp` | (new) the precedence chain: forward-secure, publicly verifiable proof that one record preceded another | done |
 | `voting.hpp` | (new) Preference Ranked Voting (PRV 1.0) | done: every outcome matches the reference on 420 elections |
 | `stx_btree/` | (brought in) bbtree's ordered maps and the optimal search trees, from malkuth-software/stx_btree | done: its own tests pass in every mode |
-| `memory.hpp` | `malloc`, `free`, `calloc`, `realloc`, global `operator new` and `delete` | done: mimalloc v3.5.3 behind the seam; host malloc under sanitizers |
+| `memory.hpp` | `malloc` and `free` where our code wants its own storage (named calls; nothing is redirected) | done: mimalloc v3.5.3 behind the seam; host malloc under sanitizers; tag check mode |
 | `thread_pool.hpp` | the owner's `threadpool_atomic_fast` pool | done: conformance-tested against the C reference |
 | `text.hpp` | `snprintf`/`sprintf`/`vsnprintf`, `sscanf`, `std::to_string`, `stoi`/`stod`/`stoull`..., `atoi`/`atof`/`strtod`/`strtol`, `setw`/`setprecision`/`setfill`/`fixed`/`hex`, `setlocale` | done; not covered yet: `std::quoted`, general string streams |
 | `threads.hpp` | `std::thread`/`jthread`, `this_thread::get_id`, `sleep_for`, `sleep_until`, `yield`, `hardware_concurrency`, `std::mutex`, `lock_guard`/`scoped_lock` of one mutex, `condition_variable`, `call_once` | done; not yet covered: `std::async`/`future`/`promise`, detached threads, multi-mutex `scoped_lock`, `recursive_mutex` |
@@ -134,21 +134,26 @@ ctest --test-dir build/stx_auxlib --output-on-failure
 
 ## Memory
 
-Link `stx_auxlib::global_allocator` into an executable to route every
-`operator new` and `delete` to the backend, and call
-`stx_auxlib::memory::allocate(size, alignment)` and `release(block)` for raw
-storage instead of `malloc` and `free`. The backend is mimalloc by default
-(`STX_AUXLIB_ALLOCATOR=mimalloc`); a build whose flags enable address or
-thread sanitizers defaults to `host`, which uses the C library's malloc and
-leaves `operator new` to the toolchain so the sanitizers keep checking the
-whole heap. `STX_AUXLIB_MIMALLOC_SECURE=ON` turns on mimalloc's security
-mitigations (mimalloc cites under 25% cost).
+Call `stx_auxlib::memory::allocate(size, alignment)` and `release(block)` for
+storage our code owns: substantial or runtime-sized buffers held by explicit
+owners (heap arrays, arenas, pools). Nothing is redirected to this allocator:
+`operator new`, `delete`, `malloc` and `free` stay the toolchain's, and foreign
+modules keep their own allocators. Only our code allocates from it and only our
+code releases to it (docs/ALLOCATOR_OWNERSHIP.md). The backend is mimalloc by
+default (`STX_AUXLIB_ALLOCATOR=mimalloc`); a build whose flags enable address or
+thread sanitizers defaults to `host`, which uses the C library's malloc so the
+sanitizers keep checking the whole heap. `STX_AUXLIB_MIMALLOC_SECURE=ON` turns
+on mimalloc's security mitigations (mimalloc cites under 25% cost).
 
-There must be one allocator per process: mimalloc's state is private to the
-image it is linked into, so link stx_auxlib into the executable, or into
-exactly one shared library every other image uses. On Windows, where each
-GUI.Forms DLL carries its own static runtime, adopting the seam therefore
-means one shared allocator image; that is integration work, not yet done.
+`STX_AUXLIB_ALLOCATION_TAGS` (`AUTO`, on in Debug and sanitizer builds) puts a
+16-byte tag below every block. `release` of a block from anywhere else, or a
+second release, then fails the process with a message, and a foreign `free` of
+one of our blocks traps; `stx_auxlib_ownership_death_tests` checks all of these.
+Release builds carry no tag.
+
+On MinGW every module links the C++ runtime statically: stx_auxlib adds
+`-static` to its consumers' links and refuses flags that ask for the shared
+runtime, whose DLL would free across the module boundary.
 
 ## Threads and clocks
 

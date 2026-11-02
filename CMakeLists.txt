@@ -50,6 +50,31 @@ set_property(CACHE STX_AUXLIB_ALLOCATOR PROPERTY STRINGS mimalloc host)
 if(NOT STX_AUXLIB_ALLOCATOR MATCHES "^(mimalloc|host)$")
     message(FATAL_ERROR "STX_AUXLIB_ALLOCATOR must be mimalloc or host")
 endif()
+# The allocation check mode (include/stx_auxlib/memory.hpp, src/hosted/memory.cpp):
+# a 16-byte tag below every block from memory::allocate, checked by release.
+# AUTO turns it on in Debug and sanitizer builds; Release builds pay nothing.
+set(STX_AUXLIB_ALLOCATION_TAGS AUTO CACHE STRING
+    "Tag and check memory::allocate blocks: AUTO (Debug and sanitizer builds), ON or OFF")
+set_property(CACHE STX_AUXLIB_ALLOCATION_TAGS PROPERTY STRINGS AUTO ON OFF)
+if(NOT STX_AUXLIB_ALLOCATION_TAGS MATCHES "^(AUTO|ON|OFF)$")
+    message(FATAL_ERROR "STX_AUXLIB_ALLOCATION_TAGS must be AUTO, ON or OFF")
+endif()
+
+# Static libc++ in every module (docs/ALLOCATOR_OWNERSHIP.md, 2.3). A shared
+# libc++ DLL binds its own operator new and delete, and its extern-template
+# and thread code allocates on one side of the DLL boundary and frees on the
+# other. On MinGW, stx_auxlib links its consumers' executables and DLLs
+# statically and refuses a configuration that asks for the shared runtime.
+if(MINGW)
+    set(_stx_auxlib_link_flags
+        "${CMAKE_CXX_FLAGS} ${CMAKE_EXE_LINKER_FLAGS} ${CMAKE_SHARED_LINKER_FLAGS} ${CMAKE_MODULE_LINKER_FLAGS}")
+    if(_stx_auxlib_link_flags MATCHES "-shared-libstdc\\+\\+|-shared-libgcc|libc\\+\\+\\.dll")
+        message(FATAL_ERROR
+            "stx_auxlib on MinGW requires the static C++ runtime; the flags ask for a shared one "
+            "(docs/ALLOCATOR_OWNERSHIP.md, 2.3)")
+    endif()
+endif()
+
 option(STX_AUXLIB_MIMALLOC_SECURE
     "Build mimalloc with its security mitigations (MI_SECURE=4; guard pages, encoded free lists, double-free detection; mimalloc cites under 25% cost)"
     OFF)
@@ -126,6 +151,18 @@ add_library(stx_auxlib STATIC
     src/hosted/threads.cpp)
 add_library(stx_auxlib::stx_auxlib ALIAS stx_auxlib)
 target_compile_features(stx_auxlib PUBLIC cxx_std_20)
+if(STX_AUXLIB_ALLOCATION_TAGS STREQUAL "ON")
+    target_compile_definitions(stx_auxlib PRIVATE STX_AUXLIB_ALLOCATION_TAGS=1)
+elseif(STX_AUXLIB_ALLOCATION_TAGS STREQUAL "AUTO")
+    if("${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_INIT}" MATCHES "-fsanitize=")
+        target_compile_definitions(stx_auxlib PRIVATE STX_AUXLIB_ALLOCATION_TAGS=1)
+    else()
+        target_compile_definitions(stx_auxlib PRIVATE $<$<CONFIG:Debug>:STX_AUXLIB_ALLOCATION_TAGS=1>)
+    endif()
+endif()
+if(MINGW)
+    target_link_options(stx_auxlib INTERFACE -static)
+endif()
 set_target_properties(stx_auxlib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # btree/include holds stx_btree (header-only; btree/PROVENANCE.md), whose
 # headers keep their own "stx_btree/..." paths.
@@ -212,48 +249,44 @@ if(STX_AUXLIB_ALLOCATOR STREQUAL "mimalloc")
     if(WIN32)
         target_link_libraries(stx_auxlib PRIVATE psapi shell32 user32 advapi32 bcrypt)
     endif()
-
-    # The replacement operator new and delete. Only an executable links it
-    # (include/stx_auxlib/memory.hpp, "One allocator per process").
-    add_library(stx_auxlib_global_allocator STATIC src/hosted/global_allocator.cpp)
-    target_link_libraries(stx_auxlib_global_allocator PUBLIC stx_auxlib)
-else()
-    # The host backend leaves operator new and delete to the toolchain.
-    add_library(stx_auxlib_global_allocator INTERFACE)
-    target_link_libraries(stx_auxlib_global_allocator INTERFACE stx_auxlib)
 endif()
-add_library(stx_auxlib::global_allocator ALIAS stx_auxlib_global_allocator)
-set_target_properties(stx_auxlib_global_allocator PROPERTIES EXPORT_NAME global_allocator)
 
 if(STX_AUXLIB_TESTS)
     enable_testing()
     # The reference thread pool is C (tests/reference/atomic_pool.c).
     enable_language(C)
 
-    # Every test executable runs on the program allocator it would ship with.
+    # No test replaces operator new and delete (include/stx_auxlib/memory.hpp).
     add_executable(stx_auxlib_memory_tests tests/memory_tests.cpp)
-    target_link_libraries(stx_auxlib_memory_tests PRIVATE stx_auxlib::global_allocator)
+    target_link_libraries(stx_auxlib_memory_tests PRIVATE stx_auxlib::stx_auxlib)
     target_compile_definitions(stx_auxlib_memory_tests PRIVATE
         STX_AUXLIB_EXPECT_$<UPPER_CASE:${STX_AUXLIB_ALLOCATOR}>=1)
     add_test(NAME stx_auxlib_memory_tests COMMAND stx_auxlib_memory_tests)
 
+    # Starts itself once per case; foreign and double releases must fail
+    # with our message, foreign frees must trap.
+    add_executable(stx_auxlib_ownership_death_tests tests/ownership_death_tests.cpp)
+    target_link_libraries(stx_auxlib_ownership_death_tests PRIVATE stx_auxlib::stx_auxlib)
+    add_test(NAME stx_auxlib_ownership_death_tests COMMAND stx_auxlib_ownership_death_tests)
+    set_tests_properties(stx_auxlib_ownership_death_tests PROPERTIES TIMEOUT 300)
+
     add_executable(stx_auxlib_paths_tests tests/paths_tests.cpp)
-    target_link_libraries(stx_auxlib_paths_tests PRIVATE stx_auxlib::global_allocator)
+    target_link_libraries(stx_auxlib_paths_tests PRIVATE stx_auxlib::stx_auxlib)
     add_test(NAME stx_auxlib_paths_tests COMMAND stx_auxlib_paths_tests)
 
     add_executable(stx_auxlib_files_tests tests/files_tests.cpp)
-    target_link_libraries(stx_auxlib_files_tests PRIVATE stx_auxlib::global_allocator)
+    target_link_libraries(stx_auxlib_files_tests PRIVATE stx_auxlib::stx_auxlib)
     add_test(NAME stx_auxlib_files_tests COMMAND stx_auxlib_files_tests)
 
     add_executable(stx_auxlib_environment_tests tests/environment_tests.cpp)
-    target_link_libraries(stx_auxlib_environment_tests PRIVATE stx_auxlib::global_allocator)
+    target_link_libraries(stx_auxlib_environment_tests PRIVATE stx_auxlib::stx_auxlib)
     add_test(NAME stx_auxlib_environment_tests COMMAND stx_auxlib_environment_tests)
 
     # Console and process behaviour is visible only from outside the
     # process, so a script runs the program's modes and checks their output,
     # input handling, exit status and fault report.
     add_executable(stx_auxlib_console_process_tests tests/console_process_tests.cpp)
-    target_link_libraries(stx_auxlib_console_process_tests PRIVATE stx_auxlib::global_allocator)
+    target_link_libraries(stx_auxlib_console_process_tests PRIVATE stx_auxlib::stx_auxlib)
     add_test(NAME stx_auxlib_console_process_tests
         COMMAND ${CMAKE_COMMAND}
             -DPROGRAM=$<TARGET_FILE:stx_auxlib_console_process_tests>
@@ -261,12 +294,12 @@ if(STX_AUXLIB_TESTS)
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/console_process_check.cmake)
 
     add_executable(stx_auxlib_precedence_tests tests/precedence_tests.cpp)
-    target_link_libraries(stx_auxlib_precedence_tests PRIVATE stx_auxlib::global_allocator)
+    target_link_libraries(stx_auxlib_precedence_tests PRIVATE stx_auxlib::stx_auxlib)
     add_test(NAME stx_auxlib_precedence_tests COMMAND stx_auxlib_precedence_tests)
     set_tests_properties(stx_auxlib_precedence_tests PROPERTIES TIMEOUT 300)
 
     add_executable(stx_auxlib_random_tests tests/random_tests.cpp)
-    target_link_libraries(stx_auxlib_random_tests PRIVATE stx_auxlib::global_allocator)
+    target_link_libraries(stx_auxlib_random_tests PRIVATE stx_auxlib::stx_auxlib)
     add_test(NAME stx_auxlib_random_tests COMMAND stx_auxlib_random_tests)
 
     # Every outcome of the reference count (tests/reference/prv_cases.txt,
@@ -275,7 +308,7 @@ if(STX_AUXLIB_TESTS)
     foreach(btree_test IN ITEMS unsync_map bbtree_map stress optimal_tree optimal_map)
         add_executable(stx_btree_${btree_test}_test btree/tests/${btree_test}_test.cpp)
         target_include_directories(stx_btree_${btree_test}_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/btree/tests)
-        target_link_libraries(stx_btree_${btree_test}_test PRIVATE stx_auxlib::global_allocator)
+        target_link_libraries(stx_btree_${btree_test}_test PRIVATE stx_auxlib::stx_auxlib)
         # Under ThreadSanitizer, inlining can erase an optimistic reader's
         # frame (the read is attributed to the test's thread body), and the
         # suppressions below match readers by name; keep every frame.
@@ -296,30 +329,30 @@ if(STX_AUXLIB_TESTS)
     endforeach()
 
     add_executable(stx_auxlib_voting_tests tests/voting_tests.cpp)
-    target_link_libraries(stx_auxlib_voting_tests PRIVATE stx_auxlib::global_allocator)
+    target_link_libraries(stx_auxlib_voting_tests PRIVATE stx_auxlib::stx_auxlib)
     add_test(NAME stx_auxlib_voting_tests
         COMMAND stx_auxlib_voting_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/reference/prv_cases.txt)
     set_tests_properties(stx_auxlib_voting_tests PROPERTIES TIMEOUT 300)
 
     add_executable(stx_auxlib_text_tests tests/text_tests.cpp)
-    target_link_libraries(stx_auxlib_text_tests PRIVATE stx_auxlib::global_allocator)
+    target_link_libraries(stx_auxlib_text_tests PRIVATE stx_auxlib::stx_auxlib)
     add_test(NAME stx_auxlib_text_tests COMMAND stx_auxlib_text_tests)
 
     add_executable(stx_auxlib_calendar_tests tests/calendar_tests.cpp)
-    target_link_libraries(stx_auxlib_calendar_tests PRIVATE stx_auxlib::global_allocator)
+    target_link_libraries(stx_auxlib_calendar_tests PRIVATE stx_auxlib::stx_auxlib)
     add_test(NAME stx_auxlib_calendar_tests COMMAND stx_auxlib_calendar_tests)
 
     add_executable(stx_auxlib_capabilities_tests tests/capabilities_tests.cpp)
-    target_link_libraries(stx_auxlib_capabilities_tests PRIVATE stx_auxlib::global_allocator)
+    target_link_libraries(stx_auxlib_capabilities_tests PRIVATE stx_auxlib::stx_auxlib)
     add_test(NAME stx_auxlib_capabilities_tests COMMAND stx_auxlib_capabilities_tests)
     set_tests_properties(stx_auxlib_capabilities_tests PROPERTIES TIMEOUT 120)
 
     add_executable(stx_auxlib_clocks_tests tests/clocks_tests.cpp)
-    target_link_libraries(stx_auxlib_clocks_tests PRIVATE stx_auxlib::global_allocator)
+    target_link_libraries(stx_auxlib_clocks_tests PRIVATE stx_auxlib::stx_auxlib)
     add_test(NAME stx_auxlib_clocks_tests COMMAND stx_auxlib_clocks_tests)
 
     add_executable(stx_auxlib_threads_tests tests/threads_tests.cpp)
-    target_link_libraries(stx_auxlib_threads_tests PRIVATE stx_auxlib::global_allocator)
+    target_link_libraries(stx_auxlib_threads_tests PRIVATE stx_auxlib::stx_auxlib)
     add_test(NAME stx_auxlib_threads_tests COMMAND stx_auxlib_threads_tests)
     set_tests_properties(stx_auxlib_threads_tests PROPERTIES TIMEOUT 60)
 
@@ -335,7 +368,7 @@ if(STX_AUXLIB_TESTS)
     target_compile_definitions(stx_auxlib_math_dekker_tests PRIVATE
         STX_AUXLIB_MATH_DEKKER STX_AUXLIB_MATH_VARIANT=native)
     foreach(math_test IN ITEMS stx_auxlib_math_tests stx_auxlib_math_dekker_tests)
-        target_link_libraries(${math_test} PRIVATE stx_auxlib::global_allocator)
+        target_link_libraries(${math_test} PRIVATE stx_auxlib::stx_auxlib)
         target_include_directories(${math_test} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
         # The test's inlined double-double reference (tests/reference/wide.hpp)
         # needs contraction off too: contracted, its own self-check fails.
@@ -354,11 +387,11 @@ if(STX_AUXLIB_TESTS)
         endforeach()
     endif()
     add_executable(stx_auxlib_simd_tests tests/simd_tests.cpp)
-    target_link_libraries(stx_auxlib_simd_tests PRIVATE stx_auxlib::global_allocator)
+    target_link_libraries(stx_auxlib_simd_tests PRIVATE stx_auxlib::stx_auxlib)
     add_test(NAME stx_auxlib_simd_tests COMMAND stx_auxlib_simd_tests)
 
     add_executable(stx_auxlib_thread_pool_tests tests/thread_pool_tests.cpp)
-    target_link_libraries(stx_auxlib_thread_pool_tests PRIVATE stx_auxlib::global_allocator)
+    target_link_libraries(stx_auxlib_thread_pool_tests PRIVATE stx_auxlib::stx_auxlib)
     add_test(NAME stx_auxlib_thread_pool_tests COMMAND stx_auxlib_thread_pool_tests)
 
     # One conformance source, written against the reference's C interface,
@@ -366,7 +399,7 @@ if(STX_AUXLIB_TESTS)
     # the reference itself; both executables must pass.
     add_executable(stx_auxlib_thread_pool_conformance
         tests/thread_pool_conformance.cpp tests/reference/atomic_pool_adapter.cpp)
-    target_link_libraries(stx_auxlib_thread_pool_conformance PRIVATE stx_auxlib::global_allocator)
+    target_link_libraries(stx_auxlib_thread_pool_conformance PRIVATE stx_auxlib::stx_auxlib)
     add_executable(stx_auxlib_thread_pool_reference_conformance
         tests/thread_pool_conformance.cpp tests/reference/atomic_pool.c)
     foreach(conformance IN ITEMS stx_auxlib_thread_pool_conformance
@@ -412,11 +445,11 @@ if(STX_AUXLIB_BUILD_TOOLS)
         target_compile_features(stx_auxlib_sincos_minimum_remainder PRIVATE cxx_std_20)
         target_include_directories(stx_auxlib_sincos_minimum_remainder PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/btree/include)
-        target_link_libraries(stx_auxlib_sincos_minimum_remainder PRIVATE stx_auxlib::global_allocator)
+        target_link_libraries(stx_auxlib_sincos_minimum_remainder PRIVATE stx_auxlib::stx_auxlib)
     endif()
 endif()
 
-install(TARGETS stx_auxlib stx_auxlib_global_allocator EXPORT stx_auxlibTargets
+install(TARGETS stx_auxlib EXPORT stx_auxlibTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(DIRECTORY btree/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})

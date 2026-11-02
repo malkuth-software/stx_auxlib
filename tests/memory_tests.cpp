@@ -1,5 +1,6 @@
-// Tests of stx_auxlib::memory and, with the mimalloc backend, of the
-// replacement operator new and delete (stx_auxlib::global_allocator).
+// Tests of stx_auxlib::memory's named allocation calls. Nothing replaces
+// operator new and delete (memory.hpp); tests/ownership_death_tests.cpp
+// checks the ownership boundary itself.
 // CMakeLists.txt defines STX_AUXLIB_EXPECT_MIMALLOC or STX_AUXLIB_EXPECT_HOST
 // for the backend this build selected.
 
@@ -12,7 +13,6 @@
 #include <cstring>
 #include <limits>
 #include <new>
-#include <string>
 #include <thread>
 #include <vector>
 
@@ -88,70 +88,30 @@ void rejected_requests() {
     require(!stx_auxlib::memory::in_backend_heap(&local), "a stack address is in the heap");
 }
 
-struct alignas(256) Wide final {
-    unsigned char bytes[256]{};
-};
-
-// With the mimalloc backend, every form of operator new reaches mimalloc.
-void operator_new_routing() {
-    int* const scalar = new int(7);
-    int* const array = new int[100]();
-    Wide* const wide = new Wide();
-    Wide* const wide_array = new Wide[3]();
-    int* const quiet = new (std::nothrow) int(5);
-    std::vector<double> values(1000, 1.0);
-    std::string text(500, 'x');
-    require(aligned_to(wide, 256) && aligned_to(wide_array, 256), "aligned new is misaligned");
-    const void* const blocks[] = {scalar, array, wide, wide_array, quiet, values.data(),
-                                  text.data()};
-    for (const void* const block : blocks)
-        require(stx_auxlib::memory::in_backend_heap(block) == expect_mimalloc,
-                "operator new bypassed the backend");
-    delete scalar;
-    delete[] array;
-    delete wide;
-    delete[] wide_array;
-    delete quiet;
-}
-
-std::size_t handler_calls = 0;
-
-void exhausted_handler() {
-    ++handler_calls;
-    std::set_new_handler(nullptr);
-}
-
-// The standard's exhaustion protocol for the replacement operator new. Run
-// only with mimalloc: the host backend leaves operator new to the
-// toolchain, and a sanitizer aborts on such a request.
-void exhaustion_protocol() {
+// Run only with mimalloc: a sanitizer aborts on such a request instead of
+// letting the host backend return null.
+void exhausted_request() {
     const std::size_t impossible = std::numeric_limits<std::size_t>::max() / 2;
-    require(::operator new(impossible, std::nothrow) == nullptr, "nothrow new did not fail");
-    require(::operator new(impossible, std::align_val_t{64}, std::nothrow) == nullptr,
-            "aligned nothrow new did not fail");
-    handler_calls = 0;
-    std::set_new_handler(exhausted_handler);
-    bool thrown = false;
-    try {
-        void* const block = ::operator new(impossible);
-        ::operator delete(block);
-    } catch (const std::bad_alloc&) {
-        thrown = true;
-    }
-    require(thrown, "exhausted new did not throw bad_alloc");
-    require(handler_calls == 1, "new-handler was not called exactly once");
-    require(std::get_new_handler() == nullptr, "new-handler was not cleared");
+    require(stx_auxlib::memory::allocate(impossible, 64) == nullptr, "an impossible request succeeded");
 }
 
 // Blocks allocated on one thread and released on another.
 struct Handoff final {
-    std::vector<std::vector<int>*> blocks{};
+    std::vector<void*> blocks{};
 };
+
+std::size_t handoff_size(const std::size_t index) {
+    const std::size_t result = index % 97 + 1;
+    return result;
+}
 
 void produce(Handoff* const handoff) {
     Handoff& shared = *handoff;
-    for (int index = 0; index < 2000; ++index) {
-        std::vector<int>* const block = new std::vector<int>(static_cast<std::size_t>(index % 97 + 1), index);
+    for (std::size_t index = 0; index < 2000; ++index) {
+        const std::size_t size = handoff_size(index);
+        void* const block = stx_auxlib::memory::allocate(size, 16);
+        require(block != nullptr, "a handed-off allocation failed");
+        std::memset(block, static_cast<int>(index & 0xff), size);
         shared.blocks.push_back(block);
     }
 }
@@ -159,10 +119,11 @@ void produce(Handoff* const handoff) {
 void consume(Handoff* const handoff) {
     Handoff& shared = *handoff;
     for (std::size_t index = 0; index < shared.blocks.size(); ++index) {
-        const std::vector<int>& block = *shared.blocks[index];
-        require(block.size() == index % 97 + 1, "a handed-off block changed size");
-        require(block[0] == static_cast<int>(index), "a handed-off block changed contents");
-        delete shared.blocks[index];
+        const unsigned char* const bytes = static_cast<const unsigned char*>(shared.blocks[index]);
+        const std::size_t last = handoff_size(index) - 1;
+        require(bytes[0] == (index & 0xff) && bytes[last] == (index & 0xff),
+                "a handed-off block changed contents");
+        stx_auxlib::memory::release(shared.blocks[index]);
     }
     shared.blocks.clear();
 }
@@ -184,8 +145,7 @@ int main() {
     new_handler_storage();
     allocate_and_release();
     rejected_requests();
-    operator_new_routing();
-    if (expect_mimalloc) exhaustion_protocol();
+    if (expect_mimalloc) exhausted_request();
     cross_thread_release();
     std::puts("stx_auxlib memory tests passed");
     return 0;

@@ -1,22 +1,29 @@
 #pragma once
 
-// The program's one allocator. Every C++ allocation (operator new and
-// delete in all their forms, and so every standard container and string)
-// reaches it when the program links stx_auxlib::global_allocator, and code
-// that needs raw storage calls allocate and release here instead of malloc
-// and free.
+// stx_auxlib's allocator, used by name: code that wants its storage from
+// stx_auxlib (substantial or runtime-sized buffers held by explicit owners:
+// heap arrays, arenas, pools) calls allocate and release here. Nothing is
+// redirected to it: operator new and delete, malloc and free stay the
+// toolchain's, in this program and in every module it loads.
+//
+// Ownership boundary (docs/ALLOCATOR_OWNERSHIP.md): only our code allocates
+// from this allocator, and only our code releases to it. A block from here
+// is never handed to free, operator delete or a foreign library's release
+// call, and a block from anywhere else is never passed to release. Memory a
+// foreign library or host API returns goes back through the release call its
+// contract names.
 //
 // Backend: mimalloc (third_party/mimalloc, MIT) by default. Builds with
-// address or thread sanitizers use the host's malloc instead and leave
-// operator new and delete to the toolchain, so the sanitizers still see and
-// check every heap block; backend() says which is linked.
+// address or thread sanitizers use the host's malloc instead, so the
+// sanitizers still see and check every heap block; backend() says which is
+// linked. The backend's state is private to the image stx_auxlib is linked
+// into, so a block is released in the image that allocated it.
 //
-// One allocator per process: the allocator's state is not shared between
-// images. Link stx_auxlib into the executable, or into exactly one shared
-// library that every other image uses; two copies in one process would each
-// receive blocks the other allocated. Memory obtained from another
-// allocator (a C library's malloc, a host API) is released by that
-// allocator, never here.
+// Check mode: with STX_AUXLIB_ALLOCATION_TAGS (on in Debug and sanitizer
+// builds by default), release fails the process with a message when given a
+// block that is not from allocate or was already released, and a foreign
+// free of a block from allocate traps. tags_checked() says whether this
+// build checks.
 
 #include <cstddef>
 #include <cstdint>
@@ -31,6 +38,9 @@ enum class Backend : std::uint8_t {
 // The backend this program is linked with.
 [[nodiscard]] Backend backend() noexcept;
 
+// True when this build tags its blocks and checks them on release.
+[[nodiscard]] bool tags_checked() noexcept;
+
 // Allocates `size` bytes aligned to `alignment`, which must be a power of
 // two. A size of zero yields a unique non-null block. Returns null when
 // alignment is not a power of two, when the size cannot be represented with
@@ -39,13 +49,14 @@ enum class Backend : std::uint8_t {
 [[nodiscard]] void* allocate(std::size_t size, std::size_t alignment) noexcept;
 
 // Releases a block from allocate; null is a no-op. A block from anywhere
-// else, or released twice, is undefined behaviour.
+// else, or released twice, fails the process in the check mode and is
+// undefined behaviour otherwise.
 void release(void* address) noexcept;
 
-// True when `address` lies in memory the mimalloc backend manages: a block
-// from allocate or, with stx_auxlib::global_allocator linked, from operator
-// new. Always false with the host backend, which cannot answer. For tests
-// and diagnostics; it does not validate a pointer for release.
+// True when `address` lies in memory the mimalloc backend manages, as every
+// block from allocate does with that backend. Always false with the host
+// backend, which cannot answer. For tests and diagnostics; it does not
+// validate a pointer for release.
 [[nodiscard]] bool in_backend_heap(const void* address) noexcept;
 
 } // namespace stx_auxlib::memory

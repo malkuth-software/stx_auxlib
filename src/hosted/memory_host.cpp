@@ -22,15 +22,6 @@ namespace stx_auxlib::memory::backend_detail {
 
 const Backend linked_backend = Backend::host;
 
-void* allocate_block(const std::size_t size) noexcept {
-    // malloc(0) may return null; a C++ allocation of zero bytes may not.
-    const std::size_t requested = size == 0 ? 1 : size;
-    void* const result = std::malloc(requested);
-    return result;
-}
-
-void release_block(void* const address) noexcept { std::free(address); }
-
 void* allocate_aligned_block(const std::size_t size, const std::size_t alignment) noexcept {
     constexpr std::size_t slot = sizeof(void*);
     const std::size_t padding = alignment - 1 + slot;
