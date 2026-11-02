@@ -195,14 +195,17 @@ weekday names are left to translated language files, not to a C locale.
 
 `stx_auxlib::math::sincos(x, sine, cosine)` for `float` and `double` is a
 256-entry table with a cubic correction, giving the same bits on every host
-with or without FMA. Every `float` with 2^-27 <= |x| <= 2^20 is correctly
+with or without FMA: the rotation uses no exact product (the owner's 26-bit
+split, 2026-11-02: table values and r cut to 26 significant bits, so their
+product is exact as a plain multiply), and `tan` forms (S + C tan r) /
+(C - S tan r) the same way. Every `float` with 2^-27 <= |x| <= 2^20 is correctly
 rounded (788,529,154 values, checked exhaustively against the test
 reference). For `double`, sin, cos and `tan` are within 0.51 ulp at every
 double 2^-27 <= |x| <= 2^32, and that bound is proved, not sampled:
 `tools/sincos_certificate.py` finds the smallest remainder |x - q pi/128|
 of every binade (2^-66.49 at worst) over every q, bounds the rotation's
 error by interval analysis of every rounding (at most 0.0011 ulp for sin
-and cos, 0.0054 for tan), and bounds each reduction path's error from its
+and cos, 0.00098 for tan), and bounds each reduction path's error from its
 exact constants; inputs within 2^-30 of a multiple of pi/128 take the
 eight-part reduction. The certified worst cases run in ctest
 (`tests/reference/sincos_worst_cases.hpp`). To rerun the certificate (about
@@ -214,7 +217,8 @@ table, no longer holds. The 0.51 ulp bound is a stated budget (the
 coordinator's provisional choice, 2026-11-02), named once in the
 certificate as `STATED_BOUND_ULPS`. Measured over 120 million
 sampled inputs, the largest error is 0.500415 ulp, against 0.87 for the
-host library; about 2.5 ns (`float`) and 5.5 ns (`double`) per pair
+host library (before the split, which changed 46 of 8 million sincos and 64
+of 4 million tan results, all within the bound); about 2.5 ns (`float`) and 5.5 ns (`double`) per pair
 against 7–12 ns for `std::sin` plus `std::cos` on an A18 Pro (the
 author's measurement).
 

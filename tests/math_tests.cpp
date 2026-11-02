@@ -81,8 +81,8 @@ constexpr double hypot_ulp_limit = 0.5005;
 // atan, atan2, asin, acos: measured 0.500000 ulp over 4 million inputs each.
 constexpr double inverse_trig_ulp_limit = 0.5005;
 // tan: the stated bound, proved like sincos' (the rotation and quotient
-// together at most 0.0054 ulp). Measured worst over the sampled regions:
-// 0.500154 ulp. cbrt and the hyperbolic family (remaining_ulp_limit):
+// together at most 0.00098 ulp with the 26-bit split). Measured worst over
+// the sampled regions: 0.500154 ulp (0.499996 after the split). cbrt and the hyperbolic family (remaining_ulp_limit):
 // measured 0.500000 ulp, sampled only.
 constexpr double tan_ulp_limit = sincos_worst_cases::stated_bound_ulps;
 constexpr double remaining_ulp_limit = 0.5005;
@@ -382,7 +382,11 @@ STX_AUXLIB_MODULAR std::uint64_t output_hash() {
 }
 
 // Frozen on 2026-10-31 (Apple arm64, fma and Dekker builds, -O0 and -O2).
-constexpr std::uint64_t expected_output_hash = 0xde89d2d2ed037d01ULL;
+// Replaced on 2026-11-02 (was 0xde89d2d2ed037d01): owner's 26-bit split,
+// adopted 2026-11-02; 46/8M sincos and 64/4M tan outputs differ, all within
+// the unchanged bound. Same value at the scalar, vector128 and avx2_fma
+// levels and in the Dekker build (x86-64 MinGW).
+constexpr std::uint64_t expected_output_hash = 0x9cecbc587874960dULL;
 
 void determinism() {
     const std::uint64_t hash = output_hash();
@@ -1892,7 +1896,11 @@ STX_AUXLIB_MODULAR std::uint64_t remaining_output_hash() {
 }
 
 // Frozen on 2026-10-31 (Apple arm64, fma and Dekker builds, -O0 and -O2).
-constexpr std::uint64_t expected_remaining_output_hash = 0xd4817d61597e5a9dULL;
+// Replaced on 2026-11-02 (was 0xd4817d61597e5a9d; tan changed): owner's 26-bit split,
+// adopted 2026-11-02; 46/8M sincos and 64/4M tan outputs differ, all within
+// the unchanged bound. Same value at the scalar, vector128 and avx2_fma
+// levels and in the Dekker build (x86-64 MinGW).
+constexpr std::uint64_t expected_remaining_output_hash = 0x46fd05aac7dac755ULL;
 
 void remaining_determinism() {
     const std::uint64_t hash = remaining_output_hash();

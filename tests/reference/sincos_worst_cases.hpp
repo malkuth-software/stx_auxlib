@@ -14,8 +14,8 @@ namespace sincos_worst_cases {
 
 // The reduction contract (tools/sincos_certificate.py, step 2), rounded
 // down: |(r + r_lo) - (x - q pi/128)| <= min(kappa |x - q pi/128|, general).
-inline constexpr double contract_kappa = 0x1.1a407a6985922p-60;
-inline constexpr double contract_general = 0x1.779c36ac29c19p-69;
+inline constexpr double contract_kappa = 0x1.21a9981306a06p-60;
+inline constexpr double contract_general = 0x1.6cc70ca639605p-68;
 // The stated bound in ulps (STATED_BOUND_ULPS).
 inline constexpr double stated_bound_ulps = 0.51;
 

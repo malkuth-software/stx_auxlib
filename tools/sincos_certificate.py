@@ -12,9 +12,9 @@ stx_auxlib::math::sincos(double) and tan(double), in four steps:
      (baby and giant steps over an ordered stx_btree index, complete over
      the range), with fixed-point error accounted and the answer checked
      exactly here. pi is computed here, with a certified error.
-  2. The core's proven error (sincos_rotate, the double-double divide in
-     tan), by interval error analysis over the table index and the reduced
-     argument, every rounding and every truncation counted. From the stated
+  2. The core's proven error (sincos_rotate; tan_rotate and the split
+     division in tan.cpp), by interval error analysis over the table index
+     and the reduced argument, every rounding and every truncation counted. From the stated
      ulp budget it follows how much error the core can accept in r, as a
      function of |r| (the reduction contract).
   3. The reduction's absolute error bound per binade, from the exact stored
@@ -148,12 +148,17 @@ def read_constants():
     # nearest doubles to -1/6, 1/120, -1/5040, 1/24, -1/720 (IEEE division
     # rounds to nearest in C++ constant evaluation and in Python alike).
     for spelling in ('sin_3 = -1.0 / 6.0', 'sin_5 = 1.0 / 120.0', 'sin_7 = -1.0 / 5040.0',
-                     'cos_half = 0.5', 'cos_4 = 1.0 / 24.0', 'cos_6 = -1.0 / 720.0'):
+                     'cos_half = 0.5', 'cos_4 = 1.0 / 24.0', 'cos_6 = -1.0 / 720.0',
+                     'tan_3 = 1.0 / 3.0', 'tan_5 = 2.0 / 15.0', 'tan_7 = 17.0 / 315.0',
+                     'tan_9 = 62.0 / 2835.0', 'tan_11 = 1382.0 / 155925.0',
+                     'cut_26_mask = ~((std::uint64_t{1} << 27) - 1)'):
         require(spelling in core_text, 'sincos_core.hpp no longer spells ' + spelling)
     coefficients = {
         'sin_3': Fraction(-1.0 / 6.0), 'sin_5': Fraction(1.0 / 120.0),
         'sin_7': Fraction(-1.0 / 5040.0), 'cos_4': Fraction(1.0 / 24.0),
         'cos_6': Fraction(-1.0 / 720.0),
+        'tan_3': Fraction(1.0 / 3.0), 'tan_5': Fraction(2.0 / 15.0), 'tan_7': Fraction(17.0 / 315.0),
+        'tan_9': Fraction(62.0 / 2835.0), 'tan_11': Fraction(1382.0 / 155925.0),
     }
     return table, fast_parts, medium_parts, medium_rest, inverse_step, coefficients
 
@@ -580,29 +585,51 @@ def multiply(a, b):
     return rounded(min(products), max(products), error)
 
 
-def exact_product_parts(factor, r_low, r_high):
-    """two_product(factor, r): the rounded product and its exact error, as Values."""
-    products = (factor * r_low, factor * r_high)
-    low = min(products)
-    high = max(products)
-    magnitude = magnitude_interval(low, high)
-    widen = half_ulp(magnitude)
-    head = Value(low - widen, high + widen)
-    error = Value(-widen, widen)
-    return head, error
+def cut_26(value):
+    """sincos_core.hpp's cut_26: the double's leading 26 significant bits,
+    toward zero."""
+    if value == 0:
+        return Fraction(0)
+    magnitude = abs(value)
+    exponent = magnitude.numerator.bit_length() - magnitude.denominator.bit_length()
+    if Fraction(2) ** exponent > magnitude:
+        exponent -= 1
+    quantum = Fraction(2) ** (exponent - 25)
+    kept = math.floor(magnitude / quantum) * quantum
+    return kept if value > 0 else -kept
 
 
-def core_errors(k, r_low, r_high, r_lo_max, parts=None):
-    """Absolute error bounds of the core's sin and cos double-doubles for
-    table index k and r in [r_low, r_high] (the remainder's head, a double),
-    |r_lo| <= r_lo_max, against sin and cos of k pi/128 + r + r_lo."""
-    s, c, s_lo, c_lo = TABLE[k]
-    (sin_low, sin_high), (cos_low, cos_high) = sin_cos_of_step_multiple(k)
-    sigma_s = magnitude_interval(sin_low - s - s_lo, sin_high - s - s_lo)
-    sigma_c = magnitude_interval(cos_low - c - c_lo, cos_high - c - c_lo)
+def nearest_double(value):
+    """value rounded to the nearest double (exact: Python's float() of a
+    Fraction rounds correctly)."""
+    if value == 0:
+        return Fraction(0)
+    return Fraction(float(value))
+
+
+def table_cut(head, low):
+    """make_sincos_cuts: h1 = cut_26(head) and h2 = fl((head - h1) + low), h2
+    as a Value whose error is its distance from (head - h1) + low."""
+    h1 = cut_26(head)
+    exact_rest = (head - h1) + low
+    h2 = nearest_double(exact_rest)
+    return h1, Value(h2, h2, abs(h2 - exact_rest))
+
+
+def cut_parts(r_low, r_high):
+    """r1 = cut_26(r) and r2 = r - r1 (exact): |r1| <= |r| with r's sign, and
+    |r2| < 2^-25 |r|. Returns r1's magnitude bound and r2 as a Value."""
+    m = magnitude_interval(r_low, r_high)
+    d = m * Fraction(1, 2 ** 25)
+    return m, Value(-d, d)
+
+
+def reduced_polynomials(r_low, r_high, r_lo_max):
+    """r^2, sin r - r and cos r - 1 as sincos_rotate forms them (Values), with
+    their model errors and bounds on the true values."""
     r_magnitude = magnitude_interval(r_low, r_high)
-    r_value = Value(r_low, r_high)
     r_lo_value = Value(-r_lo_max, r_lo_max)
+    r_value = Value(r_low, r_high)
     squares = (r_low * r_low, r_high * r_high)
     square_low = Fraction(0) if r_low <= 0 <= r_high else min(squares)
     r2 = rounded(square_low, max(squares), Fraction(0))
@@ -634,51 +661,136 @@ def core_errors(k, r_low, r_high, r_lo_max, parts=None):
                 m ** 6 * abs(Fraction(-1, 720) - co['cos_6']) + m ** 8 / math.factorial(8))
     sp_true_max = rho + (m + rho) ** 3 / 6
     cp_true_max = (m + rho) ** 2 / 2
+    return r_value, r2, sp, cp, model_sp, model_cp, sp_true_max, cp_true_max
 
-    # sin: head + tail with S + C r summed exactly (fast_two_sum needs |S| >=
-    # |fl(C r)| unless S = 0).
-    sin_rotation, sin_rotation_error = exact_product_parts(c, r_low, r_high)
-    require(s == 0 or abs(s) >= sin_rotation.magnitude(), 'fast_two_sum precondition (sin) at k = %d' % k)
-    head_sum = Value(s + sin_rotation.low, s + sin_rotation.high)
-    sin_head_error = Value(-half_ulp(head_sum.magnitude()), half_ulp(head_sum.magnitude()))
-    small = add(add(multiply(constant(c), sp), multiply(constant(s), cp)),
-                add(constant(s_lo), multiply(constant(c_lo), r_value)))
-    inner = add(sin_rotation_error, small)
-    tail = add(sin_head_error, inner)
+
+def table_sigmas(k):
+    """|S + S_lo - sin(k pi/128)| and the same for cos, bounded."""
+    s, c, s_lo, c_lo = TABLE[k]
+    (sin_low, sin_high), (cos_low, cos_high) = sin_cos_of_step_multiple(k)
+    sigma_s = magnitude_interval(sin_low - s - s_lo, sin_high - s - s_lo)
+    sigma_c = magnitude_interval(cos_low - c - c_lo, cos_high - c - c_lo)
+    return sigma_s, sigma_c
+
+
+def core_errors(k, r_low, r_high, r_lo_max, parts=None):
+    """Absolute error bounds of the core's sin and cos double-doubles for
+    table index k and r in [r_low, r_high] (the remainder's head, a double),
+    |r_lo| <= r_lo_max, against sin and cos of k pi/128 + r + r_lo. The
+    rotation is the owner's 26-bit split: c1 r1 and s1 r1 are exact and join
+    S and C by fast two-sums; the cross terms c1 r2 + c2 r and s1 r2 + s2 r
+    are rounded, and each of their roundings is counted."""
+    s, c, s_lo, c_lo = TABLE[k]
+    sigma_s, sigma_c = table_sigmas(k)
+    r_value, _, sp, cp, model_sp, model_cp, sp_true_max, cp_true_max = reduced_polynomials(
+        r_low, r_high, r_lo_max)
+    m, r2_cut = cut_parts(r_low, r_high)
+    s1, s2 = table_cut(s, s_lo)
+    c1, c2 = table_cut(c, c_lo)
+
+    # sin: fast_two_sum(S, c1 r1) needs |S| >= |c1 r1| unless S = 0. The
+    # exact expression evaluated is S + C r + C_lo r + C sp + S cp + S_lo.
+    rotation = abs(c1) * m
+    require(s == 0 or abs(s) >= rotation, 'fast_two_sum precondition (sin) at k = %d' % k)
+    head_error = half_ulp(abs(s) + rotation)
+    sin_head_error = Value(-head_error, head_error)
+    cross = add(multiply(constant(c1), r2_cut), multiply(c2, r_value))
+    small = add(multiply(constant(c), sp), multiply(constant(s), cp))
+    inner = add(cross, small)
+    tail = add(add(sin_head_error, inner), constant(s_lo))
     neglected = (sigma_s + sigma_c * m + (abs(s_lo) + sigma_s) * cp_true_max +
                  (abs(c_lo) + sigma_c) * sp_true_max)
     sin_error = tail.error + abs(c) * model_sp + abs(s) * model_cp + neglected
     if parts is not None:
         parts['sin'] = [('roundings in r2 and sin_r_minus_r', sp.error),
                         ('roundings in cos_r_minus_1', cp.error),
+                        ('cross terms c1 r2 + c2 r, cumulative', cross.error),
                         ('sin_small: its products and sums, cumulative', small.error),
-                        ('inner sum (rotation error + small), cumulative', inner.error),
-                        ('tail sum (head error + inner), cumulative', tail.error),
+                        ('inner sum (cross + small), cumulative', inner.error),
+                        ('tail sums (head error, inner, S_lo), cumulative', tail.error),
                         ('|C| * polynomial model error of sin r - r', abs(c) * model_sp),
                         ('|S| * polynomial model error of cos r - 1', abs(s) * model_cp),
                         ('table errors sigma and their products (neglected terms)', neglected)]
 
-    cos_rotation, cos_rotation_error = exact_product_parts(s, r_low, r_high)
-    require(c == 0 or abs(c) >= cos_rotation.magnitude(), 'fast_two_sum precondition (cos) at k = %d' % k)
-    head_sum = Value(c - cos_rotation.high, c - cos_rotation.low)
-    cos_head_error = Value(-half_ulp(head_sum.magnitude()), half_ulp(head_sum.magnitude()))
-    small = add(subtract(multiply(constant(c), cp), multiply(constant(s), sp)),
-                subtract(constant(c_lo), multiply(constant(s_lo), r_value)))
-    inner = subtract(small, cos_rotation_error)
-    tail = add(cos_head_error, inner)
+    # cos: fast_two_sum(C, -s1 r1); the exact expression is C - S r - S_lo r
+    # + C cp - S sp + C_lo.
+    rotation = abs(s1) * m
+    require(c == 0 or abs(c) >= rotation, 'fast_two_sum precondition (cos) at k = %d' % k)
+    head_error = half_ulp(abs(c) + rotation)
+    cos_head_error = Value(-head_error, head_error)
+    cross = add(multiply(constant(s1), r2_cut), multiply(s2, r_value))
+    small = subtract(multiply(constant(c), cp), multiply(constant(s), sp))
+    inner = subtract(small, cross)
+    tail = add(add(cos_head_error, inner), constant(c_lo))
     neglected = (sigma_c + sigma_s * m + (abs(c_lo) + sigma_c) * cp_true_max +
                  (abs(s_lo) + sigma_s) * sp_true_max)
     cos_error = tail.error + abs(c) * model_cp + abs(s) * model_sp + neglected
     if parts is not None:
         parts['cos'] = [('roundings in r2 and sin_r_minus_r', sp.error),
                         ('roundings in cos_r_minus_1', cp.error),
+                        ('cross terms s1 r2 + s2 r, cumulative', cross.error),
                         ('cos_small: its products and sums, cumulative', small.error),
-                        ('inner difference (small - rotation error), cumulative', inner.error),
-                        ('tail sum (head error + inner), cumulative', tail.error),
+                        ('inner difference (small - cross), cumulative', inner.error),
+                        ('tail sums (head error, inner, C_lo), cumulative', tail.error),
                         ('|C| * polynomial model error of cos r - 1', abs(c) * model_cp),
                         ('|S| * polynomial model error of sin r - r', abs(s) * model_sp),
                         ('table errors sigma and their products (neglected terms)', neglected)]
     return sin_error, cos_error
+
+
+TAN_TRUE = (Fraction(1, 3), Fraction(2, 15), Fraction(17, 315), Fraction(62, 2835), Fraction(1382, 155925))
+TAN_NAMES = ('tan_3', 'tan_5', 'tan_7', 'tan_9', 'tan_11')
+TAN_NEXT = Fraction(21844, 6081075)  # the r^13 coefficient of tan r
+
+
+def tan_errors(k, r_low, r_high, r_lo_max):
+    """Absolute error bounds of tan_rotate's numerator S + C t and denominator
+    C - S t (t = tan r), each normalized, against (sin x, cos x) / cos(r +
+    r_lo) with x = k pi/128 + r + r_lo."""
+    s, c, s_lo, c_lo = TABLE[k]
+    sigma_s, sigma_c = table_sigmas(k)
+    r_value, r2, _, _, _, _, _, _ = reduced_polynomials(r_low, r_high, r_lo_max)
+    rho = r_lo_max
+    co = COEFFICIENTS
+    # t_minus_r = r * (r2 * (tan_3 + r2 * (tan_5 + ... + r2 * tan_11))) + r_lo * (1 + r2)
+    t = multiply(r2, constant(co['tan_11']))
+    for name in ('tan_9', 'tan_7', 'tan_5'):
+        t = add(constant(co[name]), t)
+        t = multiply(r2, t)
+    t = add(constant(co['tan_3']), t)
+    t = multiply(r2, t)
+    t = multiply(r_value, t)
+    one_plus = add(constant(Fraction(1)), r2)
+    t_minus_r = add(t, multiply(Value(-rho, rho), one_plus))
+    m, r2_cut = cut_parts(r_low, r_high)
+    # Model: tan(r + r_lo) - r against the exact polynomial: coefficient
+    # roundings, the series' truncation (the r^13 term and the rest, at most
+    # 10% more for |r| < 2^-6), r_lo (sec^2 r - 1 - r^2) <= r_lo r^4, and the
+    # second-order term in r_lo.
+    model_t = (sum(abs(TAN_TRUE[i] - co[TAN_NAMES[i]]) * m ** (2 * i + 3) for i in range(5)) +
+               TAN_NEXT * m ** 13 * Fraction(11, 10) + rho * m ** 4 + 2 * rho * rho * (m + rho))
+    t_true_max = rho * (1 + (m + rho) ** 2) + (m + rho) ** 3 / 3 * Fraction(11, 10)
+    s1, s2 = table_cut(s, s_lo)
+    c1, c2 = table_cut(c, c_lo)
+    # n = S + c1 r1 (fast two-sum) + [(c1 r2 + c2 r) + C t_minus_r] + S_lo
+    rotation = abs(c1) * m
+    require(s == 0 or abs(s) >= rotation, 'fast_two_sum precondition (tan numerator) at k = %d' % k)
+    head_error = half_ulp(abs(s) + rotation)
+    cross = add(multiply(constant(c1), r2_cut), multiply(c2, r_value))
+    n_tail = add(add(Value(-head_error, head_error), add(cross, multiply(constant(c), t_minus_r))),
+                 constant(s_lo))
+    n_error = (n_tail.error + abs(c) * model_t + sigma_s + sigma_c * m +
+               (abs(c_lo) + sigma_c) * t_true_max)
+    # d = C - s1 r1 (fast two-sum) - [(s1 r2 + s2 r) + S t_minus_r] + C_lo
+    rotation = abs(s1) * m
+    require(c == 0 or abs(c) >= rotation, 'fast_two_sum precondition (tan denominator) at k = %d' % k)
+    head_error = half_ulp(abs(c) + rotation)
+    cross = add(multiply(constant(s1), r2_cut), multiply(s2, r_value))
+    d_tail = add(subtract(Value(-head_error, head_error), add(cross, multiply(constant(s), t_minus_r))),
+                 constant(c_lo))
+    d_error = (d_tail.error + abs(s) * model_t + sigma_c + sigma_s * m +
+               (abs(s_lo) + sigma_s) * t_true_max)
+    return n_error, d_error
 
 
 def function_lower_bounds(k, t_low, t_high):
@@ -716,17 +828,20 @@ def function_lower_bounds(k, t_low, t_high):
     return sin_bound, cos_bound
 
 
-# The double-double divide in tan (kernel_support.hpp `divide`), for
-# normalized n = n_hi + n_lo, d = d_hi + d_lo (|n_lo| <= u|n_hi|, |d_lo| <=
-# u|d_hi|, from two_sum): q = fl(n_hi/d_hi) = (n_hi/d_hi)(1 + t0); n_hi -
-# fl(q d_hi) is exact (Sterbenz) and so is the two_product error, so the
-# first difference is n_hi - q d_hi = -n_hi t0 exactly; the four roundings
-# that follow (subtracting the product error, adding n_lo, rounding q d_lo,
-# the last subtraction) cost u^2 |n_hi| (1 + 2 + 1 + 3), so the residual is
-# within 7u^2|n_hi| of rho = n - q d, |rho| <= 3u|n_hi|; then rho/d_hi
-# against rho/d costs 3u^2 |n_hi/d_hi| and the division's rounding 3u^2.
-# With |n_hi/d_hi| <= |n/d| (1 + 3u), the quotient is within 14u^2 relative.
-DIVIDE_RELATIVE = 14 * U * U
+# The split division in tan (tan.cpp `divide_split`), for normalized
+# n + n_lo, d + d_lo (|n_lo| <= u|n|, |d_lo| <= u|d|, from fast two-sums):
+# q1 = cut_26(fl(n fl(1/d))) is within 2^-24.9 (1 + 3u) of n/d, and d1 =
+# cut_26(d) within 2^-25 of d, so q1 d1 (exact: 26 x 26 bits) is within
+# 2^-23.9 of n and n - q1 d1 is exact (Sterbenz). Then q1 d2 (below 2^-24.9
+# |n|), the difference, n_lo, and q1 d_lo (below u|n|) and the last
+# difference: roundings of terms at most 2^-25, 2^-23, 2^-23, u and 2^-23
+# times |n| (with slack). The correction fl(residual fl(1/d)) against
+# rho / (d + d_lo): three relative roundings (1/d, the product, d_lo
+# dropped from the divisor) of a term at most 2^-22.9 |n/d|. Slack 1.01
+# on every magnitude.
+SPLIT_SLACK = Fraction(101, 100)
+SPLIT_RESIDUAL = U * SPLIT_SLACK * (Fraction(1, 2 ** 25) + 3 * Fraction(1, 2 ** 23) + U)
+DIVIDE_RELATIVE = SPLIT_RESIDUAL * SPLIT_SLACK + 3 * U * Fraction(1, 2 ** 23) * SPLIT_SLACK * SPLIT_SLACK
 
 
 BUDGET_ULPS = BUDGET_ULP
@@ -773,6 +888,7 @@ def core_certificate(r_min, r_max):
         for r_low, r_high in pieces:
             r_lo_max = U * magnitude_interval(r_low, r_high)
             sin_error, cos_error = core_errors(k, r_low, r_high, r_lo_max)
+            n_error, d_error = tan_errors(k, r_low, r_high, r_lo_max)
             t_low = r_low - r_lo_max
             t_high = r_high + r_lo_max
             sin_bound, cos_bound = function_lower_bounds(k, t_low, t_high)
@@ -787,9 +903,11 @@ def core_certificate(r_min, r_max):
             cos_upper = min(Fraction(1), c_true + s_true * t_max)
             sin_ulps = sin_error / ulp_floor(sin_bound)
             cos_ulps = cos_error / ulp_floor(cos_bound)
-            sin_relative = sin_error / sin_bound
-            cos_relative = cos_error / cos_bound
-            tan_relative = (sin_relative + cos_relative) / (1 - cos_relative) + DIVIDE_RELATIVE
+            # tan_rotate's n and d are sin x and cos x over cos(r + r_lo),
+            # so |n| >= |sin x| and |d| >= |cos x|.
+            n_relative = n_error / sin_bound
+            d_relative = d_error / cos_bound
+            tan_relative = (n_relative + d_relative) / (1 - d_relative) + DIVIDE_RELATIVE
             tan_low = sin_bound / cos_upper
             tan_high = sin_upper / cos_bound
             tan_ulps = tan_relative * tan_high / ulp_floor(tan_low)

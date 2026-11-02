@@ -28,27 +28,57 @@ inline constexpr double cos_half = 0.5;  // r^2 * cos_half is exact
 inline constexpr double cos_4 = 1.0 / 24.0;
 inline constexpr double cos_6 = -1.0 / 720.0;
 
-// The table's sines and cosines split for Dekker's product, built at
-// compile time (two_product_split).
-struct SinCosSplit final {
-    Split s;
-    Split c;
+// tan r - r = r^3 (tan_3 + r^2 (tan_5 + r^2 (tan_7 + r^2 (tan_9 + r^2 tan_11))))
+// (truncation 21844/6081075 r^13, below 2^-82 r for |r| <= pi/256 + margin).
+inline constexpr double tan_3 = 1.0 / 3.0;
+inline constexpr double tan_5 = 2.0 / 15.0;
+inline constexpr double tan_7 = 17.0 / 315.0;
+inline constexpr double tan_9 = 62.0 / 2835.0;
+inline constexpr double tan_11 = 1382.0 / 155925.0;
+
+// The owner's 26-bit split (adopted 2026-11-02): a double cut to its leading
+// 26 significant bits (the low 27 significand bits cleared, toward zero), so
+// that the product of two cut values (52 bits) is exact as a plain multiply.
+// The rest, value - cut_26(value), is exact and below 2^-25 |value|. No
+// exact product (two_product) remains in the rotation, so every tier runs
+// the same operations and returns the same bits, without Dekker's product
+// where there is no fused multiply-add.
+inline constexpr std::uint64_t cut_26_mask = ~((std::uint64_t{1} << 27) - 1);
+
+constexpr double cut_26(const double value) noexcept {
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(value) & cut_26_mask;
+    const double result = std::bit_cast<double>(bits);
+    return result;
+}
+
+// Each table entry's sine and cosine cut: s1 = cut_26(S) and s2 = (S - s1) +
+// S_lo (S - s1 exact; adding S_lo rounds at about 2^-80 of S), so s1 + s2 is
+// S + S_lo; the same for C. Built at compile time.
+struct SinCosCut final {
+    double s1{0.0};
+    double s2{0.0};
+    double c1{0.0};
+    double c2{0.0};
 };
 
-struct SinCosSplits final {
-    SinCosSplit values[256];
+struct SinCosCuts final {
+    SinCosCut values[256];
 };
 
-constexpr SinCosSplits make_sincos_splits() noexcept {
-    SinCosSplits table{};
+constexpr SinCosCuts make_sincos_cuts() noexcept {
+    SinCosCuts table{};
     for (int i = 0; i < 256; ++i) {
-        table.values[i].s = veltkamp_split(sincos_table_256[i].s);
-        table.values[i].c = veltkamp_split(sincos_table_256[i].c);
+        const SinCosEntry& entry = sincos_table_256[i];
+        const double s1 = cut_26(entry.s);
+        const double c1 = cut_26(entry.c);
+        const double s2 = (entry.s - s1) + entry.s_lo;
+        const double c2 = (entry.c - c1) + entry.c_lo;
+        table.values[i] = SinCosCut{s1, s2, c1, c2};
     }
     return table;
 }
 
-alignas(64) inline constexpr SinCosSplits sincos_splits = make_sincos_splits();
+alignas(64) inline constexpr SinCosCuts sincos_cuts = make_sincos_cuts();
 
 // True when tiny_limit <= |x| <= fast_limit, false for NaN: compares on the
 // magnitude bits, which order like the magnitudes.
@@ -97,42 +127,41 @@ inline void sincos_remainder_wide(const double x, const double q, double& r,
 // remainder r + r_lo (|r_lo| <= ulp(r)/2), each pair unrounded (~1e-21
 // relative).
 //
-// With S, C the table's sin and cos at k*pi/128 and r = x - k*pi/128:
-//   sin x = S + C*r + [C*(sin r - r) + S*(cos r - 1) + S_lo + C_lo*r]
-//   cos x = C - S*r + [-S*(sin r - r) + C*(cos r - 1) + C_lo - S_lo*r]
-// The leading two terms are summed exactly (two_product, two_sum); the
-// bracket is ~r^2 times the result and its rounding stays far below an ulp.
+// With S, C the table's sin and cos at k*pi/128, r = x - k*pi/128, and
+// r1 = cut_26(r), r2 = r - r1 (exact):
+//   sin x = S + c1*r1 + [(c1*r2 + c2*r) + C*(sin r - r) + S*(cos r - 1)] + S_lo
+//   cos x = C - s1*r1 + [C*(cos r - 1) - S*(sin r - r) - (s1*r2 + s2*r)] + C_lo
+// c1*r1 and s1*r1 are exact and join the table value exactly (fast
+// two-sum); the cross terms are below 2^-24 |C r| and the polynomial terms
+// ~r^2 times the result, so their roundings stay far below an ulp
+// (tools/sincos_certificate.py counts each one).
 inline void sincos_rotate(const std::uint64_t index, const double r, const double r_lo,
                           double& s_hi, double& s_lo, double& c_hi, double& c_lo) noexcept {
-    const double r2 = r * r;
+    const double r_squared = r * r;
     const double sin_r_minus_r =
-        r_lo + r * (r2 * (kernel_constants.sin_3 + r2 * (kernel_constants.sin_5 + r2 * kernel_constants.sin_7)));
+        r_lo + r * (r_squared * (kernel_constants.sin_3 + r_squared * (kernel_constants.sin_5 + r_squared * kernel_constants.sin_7)));
     const double cos_r_minus_1 =
-        (r2 * r2) * (kernel_constants.cos_4 + r2 * kernel_constants.cos_6) - r2 * cos_half;
+        (r_squared * r_squared) * (kernel_constants.cos_4 + r_squared * kernel_constants.cos_6) - r_squared * cos_half;
     const SinCosEntry& entry = sincos_table_256[index];
+    const SinCosCut& cut = sincos_cuts.values[index];
+    const double r1 = cut_26(r);
+    const double r2 = r - r1;  // exact
 
-    double sin_rotation = 0.0;
-    double sin_rotation_error = 0.0;
-    const SinCosSplit& parts = sincos_splits.values[index];
-    two_product_split(entry.c, parts.c, r, sin_rotation, sin_rotation_error);
     double sin_head = 0.0;
     double sin_head_error = 0.0;
     // |S| >= sin(pi/128) > |C r| except where S = 0: a fast two-sum. The same
     // holds for C against S r below.
-    fast_two_sum(entry.s, sin_rotation, sin_head, sin_head_error);
-    const double sin_small = entry.c * sin_r_minus_r + entry.s * cos_r_minus_1 +
-                             (entry.s_lo + entry.c_lo * r);
-    const double sin_tail = sin_head_error + (sin_rotation_error + sin_small);
+    fast_two_sum(entry.s, cut.c1 * r1, sin_head, sin_head_error);
+    const double sin_cross = cut.c1 * r2 + cut.c2 * r;
+    const double sin_small = entry.c * sin_r_minus_r + entry.s * cos_r_minus_1;
+    const double sin_tail = (sin_head_error + (sin_cross + sin_small)) + entry.s_lo;
 
-    double cos_rotation = 0.0;
-    double cos_rotation_error = 0.0;
-    two_product_split(entry.s, parts.s, r, cos_rotation, cos_rotation_error);
     double cos_head = 0.0;
     double cos_head_error = 0.0;
-    fast_two_sum(entry.c, -cos_rotation, cos_head, cos_head_error);
-    const double cos_small = entry.c * cos_r_minus_1 - entry.s * sin_r_minus_r +
-                             (entry.c_lo - entry.s_lo * r);
-    const double cos_tail = cos_head_error + (cos_small - cos_rotation_error);
+    fast_two_sum(entry.c, -(cut.s1 * r1), cos_head, cos_head_error);
+    const double cos_cross = cut.s1 * r2 + cut.s2 * r;
+    const double cos_small = entry.c * cos_r_minus_1 - entry.s * sin_r_minus_r;
+    const double cos_tail = (cos_head_error + (cos_small - cos_cross)) + entry.c_lo;
 
     s_hi = sin_head;
     s_lo = sin_tail;
@@ -184,13 +213,14 @@ inline void sincos_remainder_medium(const double x, const double q, double& r,
 // tools/sincos_certificate.py, which reads this file's constants and
 // sincos_table256.hpp's:
 //
-// - The rotation (sincos_rotate, every rounding and truncation counted by
-//   interval error analysis over all 256 indices) is within 0.00110 ulp of
-//   sin and cos, and tan's quotient within 0.00536 ulp, beyond the final
-//   rounding, for exact r + r_lo. Against the stated bound of 0.51 ulp
-//   (math.hpp) that leaves the reduction |delta| <= min(2^-59.86 |r|,
-//   2^-68.45) absolute: the first where sin, cos or tan vanishes at r = 0,
-//   the second near tan's poles elsewhere.
+// - The rotation (sincos_rotate and tan.cpp's tan_rotate with its split
+//   divide, every rounding and truncation counted by interval error analysis
+//   over all 256 indices) is within 0.00110 ulp of sin and cos, and tan
+//   within 0.00098 ulp, beyond the final rounding, for exact r + r_lo.
+//   Against the stated bound of 0.51 ulp (math.hpp) that leaves the
+//   reduction |delta| <= min(2^-59.82 |r|, 2^-67.49) absolute: the first
+//   where sin, cos or tan vanishes at r = 0, the second near tan's poles
+//   elsewhere.
 // - The smallest |x - q pi/128| over every double 2^-27 <= |x| <= 2^32 with
 //   q != 0 is 2^-66.49 (computed per binade and residue class over every
 //   q, not sampled). Meeting the contract there needs pi/128 to 150 bits.
@@ -202,6 +232,14 @@ inline void sincos_remainder_medium(const double x, const double q, double& r,
 //   contract at every binade's certified minimum.
 inline constexpr double sincos_small_remainder_limit = 0x1p-30;
 
+// The eight-part reduction for the fast path's small remainders, out of
+// line: inlined into the fast path, its rarely taken branch cost every call
+// ~3.5 ns (measured, Zen 4, vector128 sincos: 18.7 against 15.2 ns).
+STX_AUXLIB_MATH_COLD inline void sincos_remainder_small(const double x, const double q, double& r,
+                                                        double& r_lo) noexcept {
+    sincos_remainder_medium(x, q, r, r_lo);
+}
+
 // q and r = x - q pi/128 as r + r_lo for the fast path (2^-27 <= |x| <=
 // 2^20), within the contract above: the three-part reduction, redone with
 // the eight parts when |r| < sincos_small_remainder_limit (about one input
@@ -210,7 +248,7 @@ inline double sincos_reduce_fast(const double x, std::uint64_t& index, double& r
     const double q = sincos_step(x, index);
     sincos_remainder_wide(x, q, r, r_lo);
     if (std::fabs(r) < sincos_small_remainder_limit) {
-        sincos_remainder_medium(x, q, r, r_lo);
+        sincos_remainder_small(x, q, r, r_lo);
     }
     return q;
 }
@@ -225,14 +263,19 @@ inline void sincos_wide(const double x, double& s_hi, double& s_lo, double& c_hi
     sincos_rotate(index, r, r_lo, s_hi, s_lo, c_hi, c_lo);
 }
 
+// The table index and r + r_lo for x in the medium range.
+inline void sincos_reduce_medium(const double x, std::uint64_t& index, double& r, double& r_lo) noexcept {
+    const double q = sincos_step(x, index);
+    sincos_remainder_medium(x, q, r, r_lo);
+}
+
 // sincos_rotate for x in the medium range.
 inline void sincos_wide_medium(const double x, double& s_hi, double& s_lo, double& c_hi,
                                double& c_lo) noexcept {
     std::uint64_t index = 0;
-    const double q = sincos_step(x, index);
     double r = 0.0;
     double r_lo = 0.0;
-    sincos_remainder_medium(x, q, r, r_lo);
+    sincos_reduce_medium(x, index, r, r_lo);
     sincos_rotate(index, r, r_lo, s_hi, s_lo, c_hi, c_lo);
 }
 

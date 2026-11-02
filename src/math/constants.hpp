@@ -22,6 +22,11 @@ struct KernelConstants final {
     double sin_7;
     double cos_4;
     double cos_6;
+    double tan_3;
+    double tan_5;
+    double tan_7;
+    double tan_9;
+    double tan_11;
     double exp_inverse_step;
     double exp_step_1;
     double exp_step_2;
