@@ -7,7 +7,11 @@
 
 #include <limits>
 
-namespace stx_auxlib::math {
+#include "variant_functions.hpp"
+
+STX_AUXLIB_MATH_TARGET_PUSH
+
+namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT {
 
 namespace detail {
 namespace {
@@ -101,4 +105,6 @@ float log10(const float x) noexcept {
     return result;
 }
 
-} // namespace stx_auxlib::math
+} // namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT
+
+STX_AUXLIB_MATH_TARGET_POP

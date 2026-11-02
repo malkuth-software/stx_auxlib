@@ -11,7 +11,9 @@
 #include "kernel_support.hpp"
 #include "sincos_table256.hpp"
 
-namespace stx_auxlib::math::detail {
+STX_AUXLIB_MATH_TARGET_PUSH
+
+namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT::detail {
 
 inline constexpr double sincos_inverse_step = 0x1.45f306dc9c883p+5;  // 128/pi, rounded
 inline constexpr double sincos_fast_limit = 0x1p20;        // keeps |q| < 2^26 (exact q * step parts)
@@ -197,4 +199,6 @@ inline void sincos_wide_medium(const double x, double& s_hi, double& s_lo, doubl
     sincos_rotate(index, r, r_lo, s_hi, s_lo, c_hi, c_lo);
 }
 
-} // namespace stx_auxlib::math::detail
+} // namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT::detail
+
+STX_AUXLIB_MATH_TARGET_POP

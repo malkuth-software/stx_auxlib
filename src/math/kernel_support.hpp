@@ -10,6 +10,8 @@
 #pragma STDC FP_CONTRACT OFF
 #endif
 
+#include "variant.hpp"
+
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -24,7 +26,16 @@
 #define STX_AUXLIB_MATH_COLD
 #endif
 
+// The tables (generated, *_table*.hpp) and kernel_constants are data,
+// shared by every variant in stx_auxlib::math::detail.
 namespace stx_auxlib::math::detail {
+}
+
+STX_AUXLIB_MATH_TARGET_PUSH
+
+namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT::detail {
+
+using namespace ::stx_auxlib::math::detail;
 
 constexpr std::uint64_t magnitude_mask = 0x7fffffffffffffffULL;
 // x + rounding_shift - rounding_shift rounds x to an integer for |x| < 2^51,
@@ -59,9 +70,8 @@ inline void fast_two_sum(const double a, const double b, double& sum, double& er
 // selects the multiply-and-add form, so the Dekker test build checks that
 // both produce the same bits.
 inline double multiply_add(const double a, const double b, const double c) noexcept {
-#if !defined(STX_AUXLIB_MATH_DEKKER) && \
-    (defined(__FP_FAST_FMA) || defined(__ARM_FEATURE_FMA) || defined(__FMA__))
-    const double result = std::fma(a, b, c);
+#if defined(STX_AUXLIB_MATH_FMA)
+    const double result = __builtin_fma(a, b, c);
 #else
     const double result = a * b + c;
 #endif
@@ -74,9 +84,8 @@ inline double multiply_add(const double a, const double b, const double c) noexc
 inline void two_product(const double a, const double b, double& product,
                                         double& error) noexcept {
     product = a * b;
-#if !defined(STX_AUXLIB_MATH_DEKKER) && \
-    (defined(__FP_FAST_FMA) || defined(__ARM_FEATURE_FMA) || defined(__FMA__))
-    error = std::fma(a, b, -product);
+#if defined(STX_AUXLIB_MATH_FMA)
+    error = __builtin_fma(a, b, -product);
 #else
     // Veltkamp split into 26-bit halves.
     constexpr double split = 134217729.0;  // 2^27 + 1
@@ -102,10 +111,16 @@ inline void two_product(const double a, const double b, double& product,
 // plain conversion, so the clearing is written as two instructions here.
 // The VEX form (AVX builds) and other targets have no such dependency.
 inline double widen(const float value) noexcept {
-#if defined(__x86_64__) && defined(__SSE2__) && !defined(__AVX__) && \
+#if defined(__x86_64__) && !defined(STX_AUXLIB_MATH_VEX) && \
     (defined(__clang__) || defined(__GNUC__))
     double result = 0.0;
     __asm__("xorps %0, %0\n\tcvtss2sd %1, %0" : "=&x"(result) : "x"(value));
+    return result;
+#elif defined(__x86_64__) && (defined(__clang__) || defined(__GNUC__))
+    // VEX: vcvtss2sd takes its upper half from its first source, so that
+    // source is the cleared destination too.
+    double result = 0.0;
+    __asm__("vxorps %0, %0, %0\n\tvcvtss2sd %1, %0, %0" : "=&x"(result) : "x"(value));
     return result;
 #else
     const double result = static_cast<double>(value);
@@ -136,10 +151,9 @@ constexpr Split veltkamp_split(const double a) noexcept {
 inline void two_product_split(const double a, const Split& a_parts, const double b,
                               double& product, double& error) noexcept {
     product = a * b;
-#if !defined(STX_AUXLIB_MATH_DEKKER) && \
-    (defined(__FP_FAST_FMA) || defined(__ARM_FEATURE_FMA) || defined(__FMA__))
+#if defined(STX_AUXLIB_MATH_FMA)
     (void)a_parts;
-    error = std::fma(a, b, -product);
+    error = __builtin_fma(a, b, -product);
 #else
     const Split b_parts = veltkamp_split(b);
     error = ((a_parts.hi * b_parts.hi - product) + a_parts.hi * b_parts.lo + a_parts.lo * b_parts.hi) +
@@ -272,4 +286,6 @@ inline double scale_wide(const double head, const double tail, const std::int64_
     return result;
 }
 
-} // namespace stx_auxlib::math::detail
+} // namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT::detail
+
+STX_AUXLIB_MATH_TARGET_POP

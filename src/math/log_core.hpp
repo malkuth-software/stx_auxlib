@@ -16,7 +16,9 @@
 #include "kernel_support.hpp"
 #include "log_table128.hpp"
 
-namespace stx_auxlib::math::detail {
+STX_AUXLIB_MATH_TARGET_PUSH
+
+namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT::detail {
 
 inline constexpr std::uint64_t smallest_normal_bits = 0x0010000000000000ULL;
 inline constexpr std::uint64_t infinity_bits = 0x7ff0000000000000ULL;
@@ -262,4 +264,6 @@ STX_AUXLIB_MODULAR inline void log_natural_wide(const std::uint64_t bits, const 
     tail = ((sum_error + sum2_error) + (logz_error + head_error)) + (small + k * kernel_constants.log_ln2_lo);
 }
 
-} // namespace stx_auxlib::math::detail
+} // namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT::detail
+
+STX_AUXLIB_MATH_TARGET_POP

@@ -10,7 +10,11 @@
 
 #include "kernel_support.hpp"
 
-namespace stx_auxlib::math {
+#include "variant_functions.hpp"
+
+STX_AUXLIB_MATH_TARGET_PUSH
+
+namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT {
 
 namespace detail {
 namespace {
@@ -169,4 +173,6 @@ float cbrt(const float value) noexcept {
     return result;
 }
 
-} // namespace stx_auxlib::math
+} // namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT
+
+STX_AUXLIB_MATH_TARGET_POP

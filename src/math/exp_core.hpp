@@ -11,7 +11,9 @@
 #include "constants.hpp"
 #include "kernel_support.hpp"
 
-namespace stx_auxlib::math::detail {
+STX_AUXLIB_MATH_TARGET_PUSH
+
+namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT::detail {
 
 inline constexpr double exp_inverse_step = 0x1.71547652b82fep+8;  // 256/ln2, rounded
 // 708 keeps k in [-1022, 1021], so 2^k and the result are normal doubles.
@@ -172,4 +174,6 @@ inline double exp_cheap(const double x) noexcept {
     return result;
 }
 
-} // namespace stx_auxlib::math::detail
+} // namespace stx_auxlib::math::STX_AUXLIB_MATH_VARIANT::detail
+
+STX_AUXLIB_MATH_TARGET_POP
