@@ -4,11 +4,16 @@ Status, 2026-11-02:
 
 - **Part 1 (the cause)** is derived from symbol resolution. It is unverified on
   a Windows host except where Part 3 cites the Windows side's measurements.
-  Facts W1, W2, W4 and W7-W8 are pending.
+  Facts W1, W2 and W4-W8 are measured on Windows (Part 3); W3's backtrace
+  is pending a debugger.
 - **Part 2 (the model)** is the owner's ownership-boundary model. It replaces an
   earlier draft that proposed a process-wide replacement; that draft was
   withdrawn.
 - **Part 4** records what is decided and what is still open.
+- **Implemented** (branch `claude/allocator-ownership-impl`): the global
+  allocator is removed (2.5 A), named calls only (2.4 option 4), static
+  libc++ enforced on MinGW (2.3), the tagging check mode and the must-trap
+  death tests (2.6).
 
 ## Sources
 
@@ -27,7 +32,7 @@ Status, 2026-11-02:
 Nothing in Part 1 rests on a repro outcome. Where a measurement agrees with it,
 the measurement is cited as confirmation.
 
-## Part 1. The cause (Windows: derived, unverified on Windows; facts W1-W11 pending except as Part 3 notes)
+## Part 1. The cause (Windows: derived, then confirmed by the measurements in Part 3)
 
 ### 1.1 What binds where
 
@@ -296,12 +301,19 @@ over the backend. It is linked by every stx_auxlib test executable.
 
 ### 2.6 Verification by invariant
 
-- **Tagging check mode** (debug and sanitizer builds; design proposed in the
+- **Tagging check mode** (debug and sanitizer builds; implemented as below; designed in the
   report to the coordinator, to be approved before implementation). Every block
   from `memory::allocate` carries a header tag. Our `release` of an untagged
   block aborts with a message, and a double release finds the tag cleared and
   aborts. A foreign free of our block traps deterministically, because the
   address handed out is not an allocation start for any foreign allocator.
+  Implemented as `STX_AUXLIB_ALLOCATION_TAGS` (`AUTO`: Debug and sanitizer
+  builds): a 16-byte header below the returned address holds the offset to
+  the backend block and the address XOR a per-process secret whose low four
+  bits are set. `release` checks the tag, clears it and frees the backend
+  block; under AddressSanitizer it first asks whether the header is
+  poisoned (a foreign red zone or a quarantined block), so the failure is
+  ours rather than the sanitizer's. Release builds carry no header.
 - **Must-trap death tests**, run as child processes by a parent test that
   checks the abnormal termination:
   1. `std::free` of a block from `memory::allocate` must trap.
@@ -320,28 +332,34 @@ over the backend. It is linked by every stx_auxlib test executable.
 
 ## Part 3. Windows-only facts (MSYS2 CLANG64 shell; LLVM 22.1.8)
 
-Status from the Windows side's record (hot_paths.md, 2026-11-02):
+Measured on Windows 11 x86-64, MSYS2 CLANG64 LLVM 22.1.8 (records in the
+private projects repository, `tracks/gui_forms/hot_paths.md`, 2026-11-02). The
+repro is the handoff repro: an executable with an executable-only replacement
+of operator new and delete, starting and joining a std::thread.
 
-- **Answered by measurement:** W3 (0xC0000374 at thread exit with a libc++ DLL)
-  and W5 (extern-template string storage freed across the boundary: TRAP with
-  the DLL, 3002/3002 balanced when static).
-- **Shown by behaviour:** W6's purpose. `-static-libstdc++` removes every
-  crossing case, but the import table itself was not dumped.
-- **Pending:** W1, W2, W4, W6 (import table), W7 and W8.
-- **No longer needed under Part 2:** W9 and W10 served UCRT dispatch for a
-  replaced malloc, and W11 served thread-exit order under a replacement.
-
-| # | Fact | Command | Status |
+| # | Fact | Command | Result |
 |---|---|---|---|
-| W1 | repro.exe imports no operator new or delete. It imports `__thread_local_data`, the `__thread_struct` constructor and destructor, and `__libcpp_tls_create`/`_set` from libc++.dll | `llvm-readobj --coff-imports repro.exe`; `clang++ … -Wl,-Map=repro.map`, then `grep -E '_Znw\|_Zdl' repro.map` | pending |
-| W2 | libc++.dll exports and defines `_Znwy`/`_ZdlPv*`, imports `free`/`malloc` from api-ms-win-crt-heap, and imports nothing from the exe | `llvm-readobj --coff-exports /clang64/bin/libc++.dll \| grep -E '_Znw\|_Zdl'`; `llvm-readobj --coff-imports /clang64/bin/libc++.dll` | pending |
-| W3 | The faulting free is UCRT free, called from libc++.dll's `__at_thread_exit`, and raises 0xC0000374 | `gdb repro.exe`; `bt` at the stop | fault code measured; backtrace pending |
-| W4 | `__at_thread_exit` calls its own sized operator delete | `llvm-objdump -dr --disassemble-symbols=_ZNSt3__121__thread_specific_ptrINS_15__thread_structEE16__at_thread_exitEPv /clang64/lib/libc++.a` | pending |
-| W5 | Extern-template string storage crosses the boundary | the Windows side's `crossing.cpp` | **measured**: TRAP with the DLL, balanced when static |
-| W6 | Static runtime: the exe has no libc++.dll or libunwind.dll import | `llvm-readobj --coff-imports repro.exe \| grep 'Name:'` after `-static-libstdc++` | behaviour measured; import table pending |
-| W7 | With the static runtime, the link map binds operator new and delete to one definition per module | `-Wl,-Map=static.map`; `grep -E '_Znw\|_Zdl' static.map` | pending |
-| W8 | CLANG64 has no static UCRT | `llvm-nm /clang64/lib/libucrt.a \| grep -E '__imp_malloc\| T malloc'` | pending (informational) |
-| W9-W11 | UCRT `_*_base` exports, ucrtbase back-binding, thread-exit order | (see the earlier draft) | not needed under Part 2 |
+| W1 | The dynamic-runtime repro imports no operator new or delete from libc++.dll | `llvm-readobj --coff-imports`; `grep -E '_Znw\|_Zdl'` over the link map | **Confirmed.** It imports `__thread_struct`'s constructor and destructor, `__thread_local_data`, `__libcpp_tls_set`, `__libcpp_thread_create`, `thread::join` and the exception ABI, and no `_Znw`/`_Zdl`; the map has no operator new or delete from libc++.dll. (It does not import `__libcpp_tls_create`.) |
+| W2 | libc++.dll exports `_Znwy`/`_ZdlPv*`, imports its heap from the UCRT, and imports nothing from the executable | `llvm-readobj --coff-exports`/`--coff-imports` on `clang64/bin/libc++.dll` | **Confirmed.** Every `_Znw*`, `_Zna*`, `_Zdl*` and `_Zda*` form is exported; the imports are KERNEL32 and `api-ms-win-crt-*` (heap among them) only. |
+| W3 | The faulting free is the UCRT's, called from libc++.dll's `__at_thread_exit`, and raises 0xC0000374 | a debugger's backtrace at the stop | **Fault code measured** (0xC0000374 at thread exit). The backtrace is pending: no debugger is installed on the Windows host (no gdb, lldb or cdb). |
+| W4 | `__at_thread_exit` calls its own sized operator delete | `llvm-objdump -dr --disassemble-symbols=…__at_thread_exit… clang64/lib/libc++.a` | **Confirmed.** Its relocations name `__thread_struct_imp`'s destructor and `_ZdlPvy` (sized delete) twice. |
+| W5 | Extern-template string storage crosses the boundary | `crossing.cpp` | **Measured**: TRAP with the DLL, balanced when static. |
+| W6 | With the static runtime the executable imports no libc++.dll or libunwind.dll | `llvm-readobj --coff-imports` after a static link | **Confirmed.** The imports are KERNEL32, ADVAPI32 and `api-ms-win-crt-*` only. |
+| W7 | With the static runtime, operator new and delete have one definition per module | `-Wl,-Map`; operator new and delete in the map | **Confirmed.** Every reference to `operator new(unsigned long long)` resolves to one address, the replacement's object; libc++.a's own definitions are not linked. |
+| W8 | CLANG64 has no static UCRT | `llvm-nm clang64/lib/libucrt.a` | **Confirmed.** `libucrt.a` defines `malloc` only beside `__imp_malloc`: it is an import library for the UCRT DLL (likewise `libucrtbase.a`). |
+| W9-W11 | UCRT `_*_base` exports, ucrtbase back-binding, thread-exit order | (see the earlier draft) | Not needed under Part 2. |
+
+MSVC (Visual Studio 2026, MSVC 14.51.36231, `cl /O1 /EHsc /std:c++20`), the
+same `crossing.cpp` with the same executable-only tagged replacement:
+
+| # | Fact | Result |
+|---|---|---|
+| M1 | The MSVC STL with `/MD` (msvcp140.dll) crosses no allocator boundary in the string, stream, facet, async, promise, thread and exception cases | **Confirmed.** No trap; no foreign block released by the replacement; balanced. |
+| M2 | The same with `/MT` | **Confirmed.** No trap and no foreign free; 4 (stream) and 2 (facet) of the replacement's blocks are still held by the static CRT's locale objects when the report runs. |
+| M3 | Our own DLL boundary crosses when one module replaces operator new, on every toolchain | **Confirmed** on MSVC `/MD`, MSVC `/MT` and MinGW static libc++: a block allocated by the executable and freed by the DLL traps (0xC0000374); a block allocated by the DLL and freed by the executable is a foreign block released by the replacement. |
+
+So the MinGW shared-libc++ crossing has no MSVC counterpart, and M3 is why no
+module of ours may replace operator new (2.3).
 
 ## Part 4. Decisions
 
@@ -357,13 +375,19 @@ Decided (owner, 2026-11-02):
 4. **No whole-process redirection.** mimalloc-redirect.dll (prebuilt) and
    import patching are not adopted.
 
-Open, for the owner:
+Decided (owner and coordinator, 2026-11-02):
 
 5. How our containers and new-expressions reach stx_auxlib's allocator (2.4).
    Recommended: named calls now; allocator-aware containers on measured paths;
    class-level operators for numerous retained families; pmr only for arenas.
+   **Decided: named calls now; allocator-aware containers only on measured
+   paths.**
 6. `stx_auxlib_global_allocator`: remove (recommended) or keep as an opt-in for
    whole single-module programs (2.5).
+   **Decided: removed.**
+
+Open, for the owner:
+
 7. Whether FreeType, HarfBuzz and miniaudio should take our allocator through
    their hooks (2.2), for inspection only. They are already safe without it.
 8. The MSVC ABI with a static CRT (clang-cl `/MT`) is not needed under this
