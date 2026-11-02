@@ -41,10 +41,11 @@ Wide atan_unit(const double u, const double u_lo) noexcept {
     double numerator = 0.0;
     double numerator_lo = 0.0;
     two_sum(u - c, u_lo, numerator, numerator_lo);
-    // Denominator 1 + u c as a double-double.
+    // Denominator 1 + u c as a double-double (c = j/128 has at most 8
+    // significant bits).
     double uc = 0.0;
     double uc_error = 0.0;
-    two_product(u, c, uc, uc_error);
+    two_product_narrow(u, c, uc, uc_error);
     double denominator = 0.0;
     double denominator_error = 0.0;
     two_sum(1.0, uc, denominator, denominator_error);
