@@ -4,8 +4,7 @@ Status, 2026-11-02:
 
 - **Part 1 (the cause)** is derived from symbol resolution. It is unverified on
   a Windows host except where Part 3 cites the Windows side's measurements.
-  Facts W1, W2 and W4-W8 are measured on Windows (Part 3); W3's backtrace
-  is pending a debugger.
+  Facts W1-W8 are measured on Windows (Part 3).
 - **Part 2 (the model)** is the owner's ownership-boundary model. It replaces an
   earlier draft that proposed a process-wide replacement; that draft was
   withdrawn.
@@ -341,7 +340,7 @@ of operator new and delete, starting and joining a std::thread.
 |---|---|---|---|
 | W1 | The dynamic-runtime repro imports no operator new or delete from libc++.dll | `llvm-readobj --coff-imports`; `grep -E '_Znw\|_Zdl'` over the link map | **Confirmed.** It imports `__thread_struct`'s constructor and destructor, `__thread_local_data`, `__libcpp_tls_set`, `__libcpp_thread_create`, `thread::join` and the exception ABI, and no `_Znw`/`_Zdl`; the map has no operator new or delete from libc++.dll. (It does not import `__libcpp_tls_create`.) |
 | W2 | libc++.dll exports `_Znwy`/`_ZdlPv*`, imports its heap from the UCRT, and imports nothing from the executable | `llvm-readobj --coff-exports`/`--coff-imports` on `clang64/bin/libc++.dll` | **Confirmed.** Every `_Znw*`, `_Zna*`, `_Zdl*` and `_Zda*` form is exported; the imports are KERNEL32 and `api-ms-win-crt-*` (heap among them) only. |
-| W3 | The faulting free is the UCRT's, called from libc++.dll's `__at_thread_exit`, and raises 0xC0000374 | a debugger's backtrace at the stop | **Fault code measured** (0xC0000374 at thread exit). The backtrace is pending: no debugger is installed on the Windows host (no gdb, lldb or cdb). |
+| W3 | The faulting free is the UCRT's, called from libc++.dll's `__at_thread_exit`, and raises 0xC0000374 | gdb 18.1 (MSYS2 CLANG64): `run`, `bt` at the stop; then a breakpoint on `__at_thread_exit` | **Confirmed.** The stop is `RtlFreeHeap` under `ucrtbase!_free_base`, called from the thread-shutdown path (`LdrShutdownThread`, return address `ntdll+0x7fa6f`). A breakpoint on libc++.dll's `__thread_specific_ptr<__thread_struct>::__at_thread_exit` is hit from that same return address, and its sized delete tail-calls `free`, so no libc++ frame remains on the faulting stack. |
 | W4 | `__at_thread_exit` calls its own sized operator delete | `llvm-objdump -dr --disassemble-symbols=…__at_thread_exit… clang64/lib/libc++.a` | **Confirmed.** Its relocations name `__thread_struct_imp`'s destructor and `_ZdlPvy` (sized delete) twice. |
 | W5 | Extern-template string storage crosses the boundary | `crossing.cpp` | **Measured**: TRAP with the DLL, balanced when static. |
 | W6 | With the static runtime the executable imports no libc++.dll or libunwind.dll | `llvm-readobj --coff-imports` after a static link | **Confirmed.** The imports are KERNEL32, ADVAPI32 and `api-ms-win-crt-*` only. |
