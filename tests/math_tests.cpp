@@ -773,16 +773,16 @@ void pow_input(const int region, Lcg& lcg, double& x, double& y) {
     } else if (region == 1) {
         const double exponent = std::floor(lcg.unit() * 2000.0) - 1000.0;
         x = std::ldexp(1.0 + lcg.unit(), static_cast<int>(exponent));
-        y = (lcg.unit() - 0.5) * 1400.0 / std::fabs(std::log(x));
+        y = (lcg.unit() - 0.5) * 1400.0 / std::fabs(stx_auxlib::math::log(x));
     } else if (region == 2) {
         x = 1.0 + (lcg.unit() - 0.5) * 2e-10;
         y = (lcg.unit() - 0.5) * 2e10;
     } else if (region == 3) {
         x = 1.0 + lcg.unit();
-        y = 709.0 / std::log(x) * (0.999 + 0.0012 * lcg.unit());
+        y = 709.0 / stx_auxlib::math::log(x) * (0.999 + 0.0012 * lcg.unit());
     } else {
         x = 1.0 + lcg.unit();
-        y = -1.0 * (708.5 + 36.5 * lcg.unit()) / std::log(x);
+        y = -1.0 * (708.5 + 36.5 * lcg.unit()) / stx_auxlib::math::log(x);
     }
 }
 
@@ -871,8 +871,11 @@ STX_AUXLIB_MODULAR std::uint64_t pow_output_hash() {
     return hash;
 }
 
-// Frozen on 2026-10-31 (Apple arm64, fma and Dekker builds, -O0 and -O2).
-constexpr std::uint64_t expected_pow_output_hash = 0xb2e35eb591ea0e1bULL;
+// Frozen on 2026-11-02 (Apple arm64, fma and Dekker builds, -O0 and -O2;
+// x86-64 MinGW, reported by the Windows side). pow_input scales its
+// exponents by the owned log, so the inputs no longer depend on the host's
+// std::log (the 2026-10-31 value did, and differed on Windows).
+constexpr std::uint64_t expected_pow_output_hash = 0xc5ae8756613caabfULL;
 
 void pow_determinism() {
     const std::uint64_t hash = pow_output_hash();
