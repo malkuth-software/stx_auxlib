@@ -27,10 +27,13 @@ namespace stx_auxlib::math {
 // 2^-27 sin = x and cos = 1, also correctly rounded.
 void sincos(float angle, float& s, float& c) noexcept;
 
-// sin and cos of a double, within 0.50042 ulp for |x| <= 2^20 (120 million
-// inputs measured; about 1 in 18,000 results is not the correctly rounded
-// double). Below 2^-27 sin = x and cos = 1 (correctly rounded, sign of zero
-// kept).
+// sin and cos of a double, within 0.51 ulp for every double 2^-27 <= |x| <=
+// 2^32: proved, not sampled (tools/sincos_certificate.py: the worst-case
+// remainders of every binade, the rotation's interval error analysis and
+// the reduction's exact error bound). The largest error measured over 120
+// million sampled inputs is 0.500415 ulp; about 1 in 18,000 results is not
+// the correctly rounded double. Below 2^-27 sin = x and cos = 1 (correctly
+// rounded, sign of zero kept).
 void sincos(double x, double& s, double& c) noexcept;
 
 // e^x for a float, correctly rounded for every float (exhaustively checked,
@@ -94,7 +97,10 @@ void sincos(double x, double& s, double& c) noexcept;
 [[nodiscard]] float acos(float x) noexcept;
 
 // tan x for |x| <= 2^32 (refused above, as for sincos). Below 2^-27
-// tan x = x (sign of zero kept). Accuracy: see tests/math_tests.cpp.
+// tan x = x (sign of zero kept). Double: within 0.51 ulp for every double
+// 2^-27 <= |x| <= 2^32, proved as for sincos (measured worst 0.500154 ulp
+// over the sampled regions). Float: correctly rounded, checked exhaustively
+// against the test reference for |x| <= 2^20, sampled above.
 [[nodiscard]] double tan(double x) noexcept;
 [[nodiscard]] float tan(float x) noexcept;
 
