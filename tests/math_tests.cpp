@@ -17,6 +17,13 @@
 #include "reference/sincos_worst_cases.hpp"
 #include "reference/wide.hpp"
 #include "../src/checked.hpp"
+// The certified worst-case test calls the reduction directly. src/math/
+// compiles once per kernel variant (src/math/variant.hpp); this test compiles
+// its own copy as the native variant, which every variant matches bit for bit.
+// The Dekker test target defines the variant already.
+#if !defined(STX_AUXLIB_MATH_VARIANT)
+#define STX_AUXLIB_MATH_VARIANT native
+#endif
 #include "../src/math/sincos_core.hpp"
 
 #include <algorithm>
@@ -225,7 +232,7 @@ void sincos_hard_reduction(const int count) {
 // exact remainder, and sin, cos and tan must be within the stated bound of
 // the exact values the certificate computed (not of the reference).
 void sincos_certified_worst_cases() {
-    namespace detail = stx_auxlib::math::detail;
+    namespace detail = stx_auxlib::math::STX_AUXLIB_MATH_VARIANT::detail;
     int checked = 0;
     for (const sincos_worst_cases::Case& entry : sincos_worst_cases::cases) {
         for (int sign = 0; sign < 2; ++sign) {
