@@ -24,13 +24,6 @@ namespace stx_auxlib::memory::backend_detail {
 
 const Backend linked_backend = Backend::mimalloc;
 
-void* allocate_block(const std::size_t size) noexcept {
-    void* const result = mi_malloc(size);
-    return result;
-}
-
-void release_block(void* const address) noexcept { mi_free(address); }
-
 void* allocate_aligned_block(const std::size_t size, const std::size_t alignment) noexcept {
     void* const result = mi_malloc_aligned(size, alignment);
     return result;
