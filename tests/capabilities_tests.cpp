@@ -8,6 +8,11 @@
 //   sigpipe               prints whether SIGPIPE is ignored (POSIX)
 // The desktop functions are checked only for what they refuse, so the
 // tests never open a browser or a file manager.
+//
+// On Windows, main's arguments are in the ANSI code page and stdout turns
+// "\n" into "\r\n", so echo reads its arguments as UTF-8 from the wide
+// command line (the CommandLineToArgvW rules children.hpp promises) and
+// writes standard output in binary mode.
 
 #include "stx_auxlib/capabilities.hpp"
 #include "stx_auxlib/children.hpp"
@@ -20,12 +25,20 @@
 
 #include <chrono>
 #include <csignal>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+#include <windows.h>
+#include <shellapi.h>
+#endif
 
 namespace {
 
@@ -233,12 +246,42 @@ void children_reset_signals() {
 }
 #endif
 
+#if defined(_WIN32)
+// This process's arguments as UTF-8, parsed from the wide command line.
+std::vector<std::string> utf8_arguments() {
+    std::vector<std::string> result{};
+    int count = 0;
+    wchar_t** const wide = CommandLineToArgvW(GetCommandLineW(), &count);
+    require(wide != nullptr, "CommandLineToArgvW failed");
+    for (int index = 0; index < count; ++index) {
+        const int bytes = WideCharToMultiByte(CP_UTF8, 0, wide[index], -1, nullptr, 0, nullptr, nullptr);
+        require(bytes > 0, "an argument is not convertible to UTF-8");
+        std::string argument(static_cast<std::size_t>(bytes), '\0');
+        WideCharToMultiByte(CP_UTF8, 0, wide[index], -1, argument.data(), bytes, nullptr, nullptr);
+        argument.resize(static_cast<std::size_t>(bytes - 1));  // drops the converted terminator
+        result.push_back(argument);
+    }
+    LocalFree(wide);
+    return result;
+}
+#endif
+
+int echo_arguments(const int argument_count, char** const arguments) {
+#if defined(_WIN32)
+    (void)argument_count;
+    (void)arguments;
+    _setmode(_fileno(stdout), _O_BINARY);
+    const std::vector<std::string> words = utf8_arguments();
+    for (std::size_t index = 2; index < words.size(); ++index) std::printf("%s\n", words[index].c_str());
+#else
+    for (int index = 2; index < argument_count; ++index) std::printf("%s\n", arguments[index]);
+#endif
+    return 0;
+}
+
 int child_mode(const int argument_count, char** const arguments) {
     const std::string_view mode = arguments[1];
-    if (mode == "echo") {
-        for (int index = 2; index < argument_count; ++index) std::printf("%s\n", arguments[index]);
-        return 0;
-    }
+    if (mode == "echo") return echo_arguments(argument_count, arguments);
     if (mode == "exit" && argument_count == 3) return std::atoi(arguments[2]);
     if (mode == "sleep") {
         stx_auxlib::sleep_for(std::chrono::seconds(10));

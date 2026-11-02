@@ -28,8 +28,19 @@
 
 namespace stx_auxlib {
 
+#if defined(_WIN32)
+// ERROR_PRIVILEGE_NOT_HELD (winerror.h), which libc++ reports in the system
+// category without an errc equivalent: creating a symbolic link without
+// developer mode or the symbolic link privilege.
+constexpr int windows_privilege_not_held = 1314;
+#endif
+
 FileStatus file_backend::status_from(const std::error_code& error) noexcept {
     if (!error) return FileStatus::ok;
+#if defined(_WIN32)
+    if (error.category() == std::system_category() && error.value() == windows_privilege_not_held)
+        return FileStatus::permission_denied;
+#endif
     if (error == std::errc::no_such_file_or_directory) return FileStatus::not_found;
     if (error == std::errc::file_exists) return FileStatus::already_exists;
     if (error == std::errc::permission_denied || error == std::errc::operation_not_permitted ||
