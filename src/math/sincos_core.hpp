@@ -26,6 +26,28 @@ inline constexpr double cos_half = 0.5;  // r^2 * cos_half is exact
 inline constexpr double cos_4 = 1.0 / 24.0;
 inline constexpr double cos_6 = -1.0 / 720.0;
 
+// The table's sines and cosines split for Dekker's product, built at
+// compile time (two_product_split).
+struct SinCosSplit final {
+    Split s;
+    Split c;
+};
+
+struct SinCosSplits final {
+    SinCosSplit values[256];
+};
+
+constexpr SinCosSplits make_sincos_splits() noexcept {
+    SinCosSplits table{};
+    for (int i = 0; i < 256; ++i) {
+        table.values[i].s = veltkamp_split(sincos_table_256[i].s);
+        table.values[i].c = veltkamp_split(sincos_table_256[i].c);
+    }
+    return table;
+}
+
+alignas(64) inline constexpr SinCosSplits sincos_splits = make_sincos_splits();
+
 // True when tiny_limit <= |x| <= fast_limit, false for NaN: compares on the
 // magnitude bits, which order like the magnitudes.
 inline bool sincos_fast_path(const double x) noexcept {
@@ -89,7 +111,8 @@ inline void sincos_rotate(const std::uint64_t index, const double r, const doubl
 
     double sin_rotation = 0.0;
     double sin_rotation_error = 0.0;
-    two_product(entry.c, r, sin_rotation, sin_rotation_error);
+    const SinCosSplit& parts = sincos_splits.values[index];
+    two_product_split(entry.c, parts.c, r, sin_rotation, sin_rotation_error);
     double sin_head = 0.0;
     double sin_head_error = 0.0;
     // |S| >= sin(pi/128) > |C r| except where S = 0: a fast two-sum. The same
@@ -101,7 +124,7 @@ inline void sincos_rotate(const std::uint64_t index, const double r, const doubl
 
     double cos_rotation = 0.0;
     double cos_rotation_error = 0.0;
-    two_product(entry.s, r, cos_rotation, cos_rotation_error);
+    two_product_split(entry.s, parts.s, r, cos_rotation, cos_rotation_error);
     double cos_head = 0.0;
     double cos_head_error = 0.0;
     fast_two_sum(entry.c, -cos_rotation, cos_head, cos_head_error);

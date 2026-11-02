@@ -113,6 +113,40 @@ inline double widen(const float value) noexcept {
 #endif
 }
 
+// A double split into two halves of at most 26 significant bits (Veltkamp),
+// hi + lo == a exactly: the split Dekker's product makes of each factor.
+struct Split final {
+    double hi{0.0};
+    double lo{0.0};
+};
+
+// Requires |a| <= 2^995. constexpr so that tables of split constants are
+// built at compile time; constant evaluation rounds as the run time does.
+constexpr Split veltkamp_split(const double a) noexcept {
+    constexpr double split = 134217729.0;  // 2^27 + 1
+    const double a_scaled = split * a;
+    const double a_hi = a_scaled - (a_scaled - a);
+    const Split result{a_hi, a - a_hi};
+    return result;
+}
+
+// two_product with the first factor's split supplied (a table constant split
+// at compile time): Dekker's form then splits only b. Same bits as
+// two_product(a, b, ...); the fused form ignores the split.
+inline void two_product_split(const double a, const Split& a_parts, const double b,
+                              double& product, double& error) noexcept {
+    product = a * b;
+#if !defined(STX_AUXLIB_MATH_DEKKER) && \
+    (defined(__FP_FAST_FMA) || defined(__ARM_FEATURE_FMA) || defined(__FMA__))
+    (void)a_parts;
+    error = std::fma(a, b, -product);
+#else
+    const Split b_parts = veltkamp_split(b);
+    error = ((a_parts.hi * b_parts.hi - product) + a_parts.hi * b_parts.lo + a_parts.lo * b_parts.hi) +
+            a_parts.lo * b_parts.lo;
+#endif
+}
+
 // 2^exponent for exponent in [-1022, 1023].
 inline double power_of_two(const std::int64_t exponent) noexcept {
     const std::uint64_t bits = static_cast<std::uint64_t>(exponent + exponent_bias) << 52;
