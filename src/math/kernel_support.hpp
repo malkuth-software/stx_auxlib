@@ -128,6 +128,22 @@ inline double widen(const float value) noexcept {
 #endif
 }
 
+// The owner's 26-bit split (adopted 2026-11-02): a double cut to its leading
+// 26 significant bits (the low 27 significand bits cleared, toward zero), so
+// that the product of two cut values (52 bits) is exact as a plain multiply.
+// The rest, value - cut_26(value), is exact and below 2^-25 |value|. A
+// rotation T + T r built from cut table values and a cut r (sincos_core.hpp,
+// exp_core.hpp) needs no exact product (two_product), so every tier runs the
+// same operations and returns the same bits, without Dekker's product where
+// there is no fused multiply-add.
+inline constexpr std::uint64_t cut_26_mask = ~((std::uint64_t{1} << 27) - 1);
+
+constexpr double cut_26(const double value) noexcept {
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(value) & cut_26_mask;
+    const double result = std::bit_cast<double>(bits);
+    return result;
+}
+
 // A double split into two halves of at most 26 significant bits (Veltkamp),
 // hi + lo == a exactly: the split Dekker's product makes of each factor.
 struct Split final {

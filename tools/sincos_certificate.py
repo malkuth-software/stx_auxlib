@@ -39,13 +39,17 @@ printed summaries).
 """
 
 import math
+import pathlib
 import re
 import sys
 from fractions import Fraction
 
-ROOT = __file__.rsplit('/tools/', 1)[0]
-TABLE_PATH = ROOT + '/src/math/sincos_table256.hpp'
-CORE_PATH = ROOT + '/src/math/sincos_core.hpp'
+# The repository root, two levels above this file (any separator, so the
+# script runs as given on Windows too).
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+TABLE_PATH = ROOT / 'src' / 'math' / 'sincos_table256.hpp'
+CORE_PATH = ROOT / 'src' / 'math' / 'sincos_core.hpp'
+SUPPORT_PATH = ROOT / 'src' / 'math' / 'kernel_support.hpp'
 
 U = Fraction(1, 2 ** 53)          # unit roundoff, round to nearest
 # The stated bound for double sin, cos and tan, in ulps of the exact
@@ -150,9 +154,10 @@ def read_constants():
     for spelling in ('sin_3 = -1.0 / 6.0', 'sin_5 = 1.0 / 120.0', 'sin_7 = -1.0 / 5040.0',
                      'cos_half = 0.5', 'cos_4 = 1.0 / 24.0', 'cos_6 = -1.0 / 720.0',
                      'tan_3 = 1.0 / 3.0', 'tan_5 = 2.0 / 15.0', 'tan_7 = 17.0 / 315.0',
-                     'tan_9 = 62.0 / 2835.0', 'tan_11 = 1382.0 / 155925.0',
-                     'cut_26_mask = ~((std::uint64_t{1} << 27) - 1)'):
+                     'tan_9 = 62.0 / 2835.0', 'tan_11 = 1382.0 / 155925.0'):
         require(spelling in core_text, 'sincos_core.hpp no longer spells ' + spelling)
+    cut_spelling = 'cut_26_mask = ~((std::uint64_t{1} << 27) - 1)'
+    require(cut_spelling in open(SUPPORT_PATH).read(), 'kernel_support.hpp no longer spells ' + cut_spelling)
     coefficients = {
         'sin_3': Fraction(-1.0 / 6.0), 'sin_5': Fraction(1.0 / 120.0),
         'sin_7': Fraction(-1.0 / 5040.0), 'cos_4': Fraction(1.0 / 24.0),

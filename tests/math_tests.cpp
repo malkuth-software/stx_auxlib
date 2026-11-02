@@ -597,7 +597,11 @@ STX_AUXLIB_MODULAR std::uint64_t exp_output_hash() {
 }
 
 // Frozen on 2026-10-31 (Apple arm64, fma and Dekker builds, -O0 and -O2).
-constexpr std::uint64_t expected_exp_output_hash = 0xbad54eddef5ab9feULL;
+// Replaced on 2026-11-02 (was 0xbad54eddef5ab9fe): owner's split, adopted
+// 2026-11-02; 1/20M exp(double) outputs differ, within bound. Same value at
+// the scalar, vector128 and avx2_fma levels and in the Dekker build (x86-64
+// MinGW).
+constexpr std::uint64_t expected_exp_output_hash = 0x1024ccb8a7c3c1adULL;
 
 void exp_determinism() {
     const std::uint64_t hash = exp_output_hash();
