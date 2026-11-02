@@ -1376,22 +1376,105 @@ double region_input(const SampleRegion& region, Lcg& lcg, const int i) {
     return (i % 2 == 0) ? magnitude : -magnitude;
 }
 
-// Inputs whose results are zeros, ones, infinities or NaN match the C
-// library bit for bit.
+// Recorded results for inputs whose results are zeros, ones, infinities, NaN
+// or tiny (|x| < 2^-27). They are recorded rather than taken from the host C
+// library, which differs between hosts: UCRT's cbrt(-0x1p-40) is one ulp
+// below the correctly rounded -0x1.965fea53d6e3dp-14 (long double cbrtl
+// agrees with the recorded value), and UCRT's tan(+-infinity) is a negative
+// NaN. Any NaN matches a recorded NaN, since C leaves its sign unspecified.
+struct SpecialValue final {
+    UnaryDouble owned{nullptr};
+    double x{0.0};
+    std::uint64_t expected_bits{0};
+};
+
 void remaining_special_values() {
     const double infinity = std::numeric_limits<double>::infinity();
     const double nan = std::numeric_limits<double>::quiet_NaN();
-    const double inputs[] = {0.0, -0.0, 1.0, -1.0, 2.0, -2.0, infinity, -infinity, nan, 0x1p-1074,
-                             -0x1p-40, 800.0, -800.0, 1e300};
-    for (const RegionKernel& kernel : remaining_kernels) {
-        for (const double x : inputs) {
-            const double library = (*kernel.library_double)(x);
-            const bool special = !std::isfinite(library) || library == 0.0 || std::fabs(library) == 1.0 ||
-                                 std::fabs(x) < 0x1p-27;
-            if (!special) continue;
-            require(same_bits((*kernel.owned_double)(x), library),
-                    "tan/cbrt/hyperbolic (double): special input differs from the C library");
-        }
+    const SpecialValue recorded[] = {
+        {owned_tan_d, 0.0, 0x0000000000000000ULL},
+        {owned_tan_d, -0.0, 0x8000000000000000ULL},
+        {owned_tan_d, infinity, 0x7ff8000000000000ULL},
+        {owned_tan_d, -infinity, 0x7ff8000000000000ULL},
+        {owned_tan_d, nan, 0x7ff8000000000000ULL},
+        {owned_tan_d, 0x1p-1074, 0x0000000000000001ULL},
+        {owned_tan_d, -0x1p-40, 0xbd70000000000000ULL},
+        {owned_cbrt_d, 0.0, 0x0000000000000000ULL},
+        {owned_cbrt_d, -0.0, 0x8000000000000000ULL},
+        {owned_cbrt_d, 1.0, 0x3ff0000000000000ULL},
+        {owned_cbrt_d, -1.0, 0xbff0000000000000ULL},
+        {owned_cbrt_d, infinity, 0x7ff0000000000000ULL},
+        {owned_cbrt_d, -infinity, 0xfff0000000000000ULL},
+        {owned_cbrt_d, nan, 0x7ff8000000000000ULL},
+        {owned_cbrt_d, 0x1p-1074, 0x2990000000000000ULL},
+        {owned_cbrt_d, -0x1p-40, 0xbf1965fea53d6e3dULL},
+        {owned_sinh_d, 0.0, 0x0000000000000000ULL},
+        {owned_sinh_d, -0.0, 0x8000000000000000ULL},
+        {owned_sinh_d, infinity, 0x7ff0000000000000ULL},
+        {owned_sinh_d, -infinity, 0xfff0000000000000ULL},
+        {owned_sinh_d, nan, 0x7ff8000000000000ULL},
+        {owned_sinh_d, 0x1p-1074, 0x0000000000000001ULL},
+        {owned_sinh_d, -0x1p-40, 0xbd70000000000000ULL},
+        {owned_sinh_d, 800.0, 0x7ff0000000000000ULL},
+        {owned_sinh_d, -800.0, 0xfff0000000000000ULL},
+        {owned_sinh_d, 1e300, 0x7ff0000000000000ULL},
+        {owned_cosh_d, 0.0, 0x3ff0000000000000ULL},
+        {owned_cosh_d, -0.0, 0x3ff0000000000000ULL},
+        {owned_cosh_d, infinity, 0x7ff0000000000000ULL},
+        {owned_cosh_d, -infinity, 0x7ff0000000000000ULL},
+        {owned_cosh_d, nan, 0x7ff8000000000000ULL},
+        {owned_cosh_d, 0x1p-1074, 0x3ff0000000000000ULL},
+        {owned_cosh_d, -0x1p-40, 0x3ff0000000000000ULL},
+        {owned_cosh_d, 800.0, 0x7ff0000000000000ULL},
+        {owned_cosh_d, -800.0, 0x7ff0000000000000ULL},
+        {owned_cosh_d, 1e300, 0x7ff0000000000000ULL},
+        {owned_tanh_d, 0.0, 0x0000000000000000ULL},
+        {owned_tanh_d, -0.0, 0x8000000000000000ULL},
+        {owned_tanh_d, infinity, 0x3ff0000000000000ULL},
+        {owned_tanh_d, -infinity, 0xbff0000000000000ULL},
+        {owned_tanh_d, nan, 0x7ff8000000000000ULL},
+        {owned_tanh_d, 0x1p-1074, 0x0000000000000001ULL},
+        {owned_tanh_d, -0x1p-40, 0xbd70000000000000ULL},
+        {owned_tanh_d, 800.0, 0x3ff0000000000000ULL},
+        {owned_tanh_d, -800.0, 0xbff0000000000000ULL},
+        {owned_tanh_d, 1e300, 0x3ff0000000000000ULL},
+        {owned_asinh_d, 0.0, 0x0000000000000000ULL},
+        {owned_asinh_d, -0.0, 0x8000000000000000ULL},
+        {owned_asinh_d, infinity, 0x7ff0000000000000ULL},
+        {owned_asinh_d, -infinity, 0xfff0000000000000ULL},
+        {owned_asinh_d, nan, 0x7ff8000000000000ULL},
+        {owned_asinh_d, 0x1p-1074, 0x0000000000000001ULL},
+        {owned_asinh_d, -0x1p-40, 0xbd70000000000000ULL},
+        {owned_acosh_d, 0.0, 0x7ff8000000000000ULL},
+        {owned_acosh_d, -0.0, 0x7ff8000000000000ULL},
+        {owned_acosh_d, 1.0, 0x0000000000000000ULL},
+        {owned_acosh_d, -1.0, 0x7ff8000000000000ULL},
+        {owned_acosh_d, -2.0, 0x7ff8000000000000ULL},
+        {owned_acosh_d, infinity, 0x7ff0000000000000ULL},
+        {owned_acosh_d, -infinity, 0x7ff8000000000000ULL},
+        {owned_acosh_d, nan, 0x7ff8000000000000ULL},
+        {owned_acosh_d, 0x1p-1074, 0x7ff8000000000000ULL},
+        {owned_acosh_d, -0x1p-40, 0x7ff8000000000000ULL},
+        {owned_acosh_d, -800.0, 0x7ff8000000000000ULL},
+        {owned_atanh_d, 0.0, 0x0000000000000000ULL},
+        {owned_atanh_d, -0.0, 0x8000000000000000ULL},
+        {owned_atanh_d, 1.0, 0x7ff0000000000000ULL},
+        {owned_atanh_d, -1.0, 0xfff0000000000000ULL},
+        {owned_atanh_d, 2.0, 0x7ff8000000000000ULL},
+        {owned_atanh_d, -2.0, 0x7ff8000000000000ULL},
+        {owned_atanh_d, infinity, 0x7ff8000000000000ULL},
+        {owned_atanh_d, -infinity, 0x7ff8000000000000ULL},
+        {owned_atanh_d, nan, 0x7ff8000000000000ULL},
+        {owned_atanh_d, 0x1p-1074, 0x0000000000000001ULL},
+        {owned_atanh_d, -0x1p-40, 0xbd70000000000000ULL},
+        {owned_atanh_d, 800.0, 0x7ff8000000000000ULL},
+        {owned_atanh_d, -800.0, 0x7ff8000000000000ULL},
+        {owned_atanh_d, 1e300, 0x7ff8000000000000ULL},
+    };
+    for (const SpecialValue& special : recorded) {
+        const double expected = std::bit_cast<double>(special.expected_bits);
+        require(same_bits((*special.owned)(special.x), expected),
+                "tan/cbrt/hyperbolic (double): special input differs from its recorded result");
     }
     for (int k = 1; k <= 200; ++k) {
         const double cube = static_cast<double>(k) * static_cast<double>(k) * static_cast<double>(k);
