@@ -58,6 +58,32 @@ Wide atan_unit(const double u, const double u_lo) noexcept {
     return result;
 }
 
+// Branch-free selection. Which octant or quadrant an angle lies in follows
+// the operands' signs and relative sizes, which a caller's angles need not
+// make predictable (random ones mispredict half the time, and each miss
+// waits for the division and polynomial behind it), so both sides are
+// formed and one is chosen by masks. The chosen values are those the
+// branches gave.
+double choose(const bool first, const double a, const double b) noexcept {
+    const std::uint64_t mask = std::uint64_t{0} - static_cast<std::uint64_t>(first);
+    const std::uint64_t bits = (std::bit_cast<std::uint64_t>(a) & mask) | (std::bit_cast<std::uint64_t>(b) & ~mask);
+    const double result = std::bit_cast<double>(bits);
+    return result;
+}
+
+Wide choose(const bool first, const Wide a, const Wide b) noexcept {
+    const Wide result{choose(first, a.hi, b.hi), choose(first, a.lo, b.lo)};
+    return result;
+}
+
+// value with its sign flipped when `negative`: -value exactly, NaN and zeros
+// included.
+double negate_if(const bool negative, const double value) noexcept {
+    const std::uint64_t sign = static_cast<std::uint64_t>(negative) << 63;
+    const double result = std::bit_cast<double>(std::bit_cast<std::uint64_t>(value) ^ sign);
+    return result;
+}
+
 // pi/2 - a and pi - a for a double-double a.
 Wide half_pi_minus(const Wide a) noexcept {
     double head = 0.0;
@@ -78,13 +104,12 @@ Wide pi_minus(const Wide a) noexcept {
 // The angle of (x, y) in [0, pi/2] for non-negative double-doubles x, y,
 // not both zero: atan of the smaller over the larger, flipped above pi/4.
 Wide first_quadrant_angle(const Wide x, const Wide y) noexcept {
-    if (y.hi <= x.hi) {
-        const Wide ratio = divide(y.hi, y.lo, x.hi, x.lo);
-        const Wide result = atan_unit(ratio.hi, ratio.lo);
-        return result;
-    }
-    const Wide ratio = divide(x.hi, x.lo, y.hi, y.lo);
-    const Wide result = half_pi_minus(atan_unit(ratio.hi, ratio.lo));
+    const bool below_diagonal = y.hi <= x.hi;
+    const Wide numerator = choose(below_diagonal, y, x);
+    const Wide denominator = choose(below_diagonal, x, y);
+    const Wide ratio = divide(numerator.hi, numerator.lo, denominator.hi, denominator.lo);
+    const Wide angle = atan_unit(ratio.hi, ratio.lo);
+    const Wide result = choose(below_diagonal, angle, half_pi_minus(angle));
     return result;
 }
 
@@ -101,16 +126,12 @@ Wide atan_magnitude(const double a) noexcept {
 
 double signed_double(const Wide value, const bool negative) noexcept {
     const double magnitude = value.hi + value.lo;
-    if (negative) return -magnitude;
-    return magnitude;
+    const double result = negate_if(negative, magnitude);
+    return result;
 }
 
 float signed_float(const Wide value, const bool negative) noexcept {
-    if (negative) {
-        const float result = round_wide_to_float(-value.hi, -value.lo);
-        return result;
-    }
-    const float result = round_wide_to_float(value.hi, value.lo);
+    const float result = round_wide_to_float(negate_if(negative, value.hi), negate_if(negative, value.lo));
     return result;
 }
 
@@ -168,10 +189,9 @@ bool atan2_finite(const double y, const double x, Wide& angle, double& direct) n
     const double scale = power_of_two(-exponent);
     const Wide sx{scaled_x * scale, 0.0};
     const Wide sy{scaled_y * scale, 0.0};
-    Wide result = first_quadrant_angle(sx, sy);
-    if (x < 0.0) result = pi_minus(result);
-    if (negative) result = Wide{-result.hi, -result.lo};
-    angle = result;
+    const Wide quadrant_angle = first_quadrant_angle(sx, sy);
+    const Wide result = choose(x < 0.0, pi_minus(quadrant_angle), quadrant_angle);
+    angle = Wide{negate_if(negative, result.hi), negate_if(negative, result.lo)};
     return false;
 }
 
@@ -270,11 +290,10 @@ double atan_unit_cheap(const double u) noexcept {
 // double; a ratio error of e relative moves atan by at most e times the
 // angle (u / (1 + u^2) <= atan u), and pi/2 - t adds two roundings.
 double first_quadrant_cheap(const double x, const double y) noexcept {
-    if (y <= x) {
-        const double result = atan_unit_cheap(y / x);
-        return result;
-    }
-    const double result = (atan_half_pi_hi - atan_unit_cheap(x / y)) + atan_half_pi_lo;
+    const bool below_diagonal = y <= x;
+    const double ratio = choose(below_diagonal, y, x) / choose(below_diagonal, x, y);
+    const double angle = atan_unit_cheap(ratio);
+    const double result = choose(below_diagonal, angle, (atan_half_pi_hi - angle) + atan_half_pi_lo);
     return result;
 }
 
@@ -303,7 +322,7 @@ float atan(const float value) noexcept {
     }
     {
         const double angle = detail::first_quadrant_cheap(1.0, a);
-        const double signed_angle = negative ? -angle : angle;
+        const double signed_angle = detail::negate_if(negative, angle);
         float fast = 0.0f;
         if (detail::float_if_certain(signed_angle, angle * detail::float_relative_bound, fast)) return fast;
     }
@@ -343,9 +362,10 @@ float atan2(const float y, const float x) noexcept {
     {
         // Cheap path for finite nonzero operands: the ratio of two floats
         // in double carries one rounding.
-        double angle = detail::first_quadrant_cheap(std::fabs(xd), std::fabs(yd));
-        if (xd < 0.0) angle = (detail::atan_pi_hi - angle) + detail::atan_pi_lo;
-        const double signed_angle = negative ? -angle : angle;
+        const double quadrant_angle = detail::first_quadrant_cheap(std::fabs(xd), std::fabs(yd));
+        const double angle =
+            detail::choose(xd < 0.0, (detail::atan_pi_hi - quadrant_angle) + detail::atan_pi_lo, quadrant_angle);
+        const double signed_angle = detail::negate_if(negative, angle);
         float fast = 0.0f;
         if (detail::float_if_certain(signed_angle, angle * detail::float_relative_bound, fast)) return fast;
     }
@@ -392,7 +412,7 @@ float asin(const float value) noexcept {
         // relative, which the angle carries at most proportionally.
         const double root = std::sqrt((1.0 - a) * (1.0 + a));
         const double angle = detail::first_quadrant_cheap(root, a);
-        const double signed_angle = negative ? -angle : angle;
+        const double signed_angle = detail::negate_if(negative, angle);
         float fast = 0.0f;
         if (detail::float_if_certain(signed_angle, angle * detail::float_relative_bound, fast)) return fast;
     }
@@ -409,8 +429,8 @@ namespace {
 Wide acos_wide(const double x) noexcept {
     const double a = std::fabs(x);
     const Wide root = complement_root(a);
-    Wide angle = first_quadrant_angle(Wide{a, 0.0}, root);
-    if (x < 0.0) angle = pi_minus(angle);
+    const Wide quadrant_angle = first_quadrant_angle(Wide{a, 0.0}, root);
+    const Wide angle = choose(x < 0.0, pi_minus(quadrant_angle), quadrant_angle);
     return angle;
 }
 
@@ -434,8 +454,9 @@ float acos(const float value) noexcept {
     {
         const double a = std::fabs(x);
         const double root = std::sqrt((1.0 - a) * (1.0 + a));
-        double angle = detail::first_quadrant_cheap(a, root);
-        if (x < 0.0) angle = (detail::atan_pi_hi - angle) + detail::atan_pi_lo;
+        const double quadrant_angle = detail::first_quadrant_cheap(a, root);
+        const double angle =
+            detail::choose(x < 0.0, (detail::atan_pi_hi - quadrant_angle) + detail::atan_pi_lo, quadrant_angle);
         float fast = 0.0f;
         if (detail::float_if_certain(angle, angle * detail::float_relative_bound, fast)) return fast;
     }
