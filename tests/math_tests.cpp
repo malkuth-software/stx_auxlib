@@ -73,8 +73,9 @@ constexpr double double_ulp_limit = sincos_worst_cases::stated_bound_ulps;
 constexpr double exp_ulp_limit = 0.5005;
 // log, log2, log10: measured 0.500000 ulp over 24 million inputs.
 constexpr double log_ulp_limit = 0.5005;
-// pow: measured 0.500000 ulp over 5 million inputs.
-constexpr double pow_ulp_limit = 0.5005;
+// pow: the analytic bound, 0.5 + 0.076 ulp (src/math/pow.cpp); measured
+// 0.5027 ulp at worst over 2 million inputs against MPFR (2026-11-02).
+constexpr double pow_ulp_limit = 0.576;
 // hypot: measured 0.500000 ulp over 10 million inputs (none misrounded).
 constexpr double hypot_ulp_limit = 0.5005;
 // atan, atan2, asin, acos: measured 0.500000 ulp over 4 million inputs each.
@@ -1151,7 +1152,11 @@ STX_AUXLIB_MODULAR std::uint64_t pow_output_hash() {
 // x86-64 MinGW, reported by the Windows side). pow_input scales its
 // exponents by the owned log, so the inputs no longer depend on the host's
 // std::log (the 2026-10-31 value did, and differed on Windows).
-constexpr std::uint64_t expected_pow_output_hash = 0xc5ae8756613caabfULL;
+// Replaced on 2026-11-02 (was 0xc5ae8756613caabf): log2 formulation
+// (owner's experiment, adopted 2026-11-02); 6/400k near-overflow inputs
+// differ, both within bound. Same value at the scalar, vector128 and
+// avx2_fma levels and in the Dekker build (x86-64 MinGW).
+constexpr std::uint64_t expected_pow_output_hash = 0x3a845b9bad3d2534ULL;
 
 void pow_determinism() {
     const std::uint64_t hash = pow_output_hash();

@@ -237,9 +237,12 @@ correctly rounded.
 `pow` owns every input as C99 Annex F specifies; its special cases match
 the host bit for bit wherever the result is a zero, an infinity, one or
 NaN. Exact powers are exact (`2^n`, `10^n` for n <= 22, small integer
-powers below 2^53, `pow(4, 0.5)`). `double` is within 0.499996 ulp over
-500,000 inputs in five regions, every subnormal result correctly rounded;
-`float` is correctly rounded at 189,000 random pairs.
+powers below 2^53, `pow(4, 0.5)`). `double` is within 0.5 + 0.076 ulp by
+an analytic bound over every rounding of its one pass in log2 units (no
+rounding test, so no second path; the same bits at every SIMD level), and
+measured within 0.5027 ulp over 2 million inputs in five regions against
+MPFR; every sampled subnormal result is correctly rounded. `float` is
+correctly rounded at 189,000 random pairs.
 
 `hypot` owns every input per Annex F (an infinite operand gives +inf even
 beside a NaN) and is exact for Pythagorean triples at every scale from

@@ -40,8 +40,11 @@ struct KernelConstants final {
     double log_10;
     double log_ln2_hi;
     double log_ln2_lo;
-    double one_third_hi;
-    double one_third_lo;
+    // pow: 1/ln 2 and ln 2 as double-doubles (full-precision heads).
+    double inverse_ln2_hi;
+    double inverse_ln2_lo;
+    double ln2_hi;
+    double ln2_lo;
     // log_core.hpp's LogBase quads: natural, binary, decimal.
     double log_bases[12];
 };
