@@ -930,7 +930,7 @@ Decided:
    stx_auxlib's btree module, and GUI.Forms depends on it.
 4. **Memory:** both packed and dense leaves (C4), and `coarsen()` under a
    run budget R (C2), with offsets outside coarsened ranges unchanged. R's
-   default is chosen by experiment (§5.5 step 4).
+   default is chosen by experiment (§5.5 step 4): 10^4 (§9.3).
 
 Open:
 
@@ -952,16 +952,25 @@ Open:
     outside the repository in the session scratchpad and are not
     committed. Iacono is cited from a secondary source only.
   - Wrote the harness (§8.3) and the production API design (§8.1).
-- **Decisions in force:** §6 items 1-4.
+- **2026-11-12, third pass:**
+  - The first M4 run failed the long-run packing case. The fault was in
+    the check, not in coarsen (§5.4); fixed at c558eca.
+  - Recorded the M4 results (§9) and chose R = 10^4 and the P5/P6
+    configuration.
+  - Wrote the package: `btree/include/stx_btree/sequence_tree.hpp` and
+    `row_height_index.hpp`, with tests `btree/tests/sequence_tree_test.cpp`
+    and `sequence_tree_exhaustive_test.cpp`, registered in the root
+    `CMakeLists.txt`. Nothing was compiled here; the integrator builds it.
+- **Decisions in force:** §6 items 1-4; R = 10^4 (§9.3).
 - **Next step:**
-  1. The integrator runs §5.5.
-  2. Record the results in §9 (a new section) with the GUI.Forms commit,
-     and choose R's default and the P-variant to productize.
-  3. Then write `stx_btree/sequence_tree.hpp` and
-     `stx_btree/row_height_index.hpp` in the package per §8.1, with the
-     prototype's checks as the package's tests, under the six stx_auxlib
-     builds.
-- **Open:** §6 item 5.
+  1. The integrator builds the package under the six stx_auxlib builds and
+     runs both tests, plus the exhaustive test with `--scope full`.
+  2. Re-run W1-W9 against the package's RowHeightIndex. Page reservation
+     changes allocation behaviour against the prototype (§9.5).
+  3. Then wire GUI.Forms' VirtualRowsView to it (GUI.Forms side,
+     coordinated with the comptroller): cursor seeks and walks,
+     set_heights per stretch, and the run budget at R = 10^4.
+- **Open:** §6 item 5; the child search (§9.4).
 
 ## 8. The sequence tree under the decisions
 
@@ -975,12 +984,13 @@ struct RowIndex    { std::uint64_t value; }   a row position; RowCount for count
 enum class RowState : std::uint8_t { estimated, measured, approximate }
 struct RowExtent   { HeightUnits top; HeightUnits height; RowState state; }
 
-template <typename Traits, typename Allocator = GlobalPageAllocator>
+template <typename Config, typename Allocator = GlobalPageAllocator>
 class detail::SequenceTree     the tree of §3: prefix-array branches (counting
                                search), packed and dense leaves, weak B-tree
-                               rebalancing, node-stack cursors. Traits declares
-                               the entry (a run here), its (count, total)
-                               projection and its packing.
+                               rebalancing, node-stack cursors. Config declares
+                               slots, words, the search, dense leaves and the
+                               limits. (The package has no entry Traits: runs
+                               are the one entry kind, house style section 7.)
 
 template <typename Allocator = GlobalPageAllocator>
 class RowHeightIndex {
@@ -1076,6 +1086,34 @@ Proof sketches (beyond C1-C3 in §4):
   children by I4, and the root branch ≥ 2). The sibling held at least the
   minimum, so the join holds at least the minimum. If it exceeds a
   capacity, it splits as above. An emptied leaf is removed.
+  - Merge or borrow (package): same-kind joins, and dense own rows with a
+    packed sibling, hold fewer than capacity + minimum entries, so they fit
+    two leaves. Only packed own entries with a dense sibling (up to
+    2·words rows) can need three. Then the own side takes exactly
+    `minimum` entries from the sibling's adjacent end. The sibling keeps
+    more than 2·words − 2·minimum ≥ minimum rows, all dense-eligible, so it
+    stays dense. Either way the two pages are reused and the parent gains
+    no child.
+- **Page reservation (package).** Every page an edit can need is taken
+  from the allocator before the edit changes anything.
+  - One leaf commit encodes at most 3·words pieces: a dense leaf (2·words)
+    plus one inserted segment of at most `words` pieces, or set_heights'
+    at most `words` rows a commit. So it needs at most three leaves, two of
+    them new.
+  - Its at most three replacement children make each ancestor split at
+    most once (slots + 2 ≤ 2·slots), and a split root grows one level. So
+    a commit needs at most one new branch a level, plus one.
+  - Merges and borrows reuse their pages.
+  - A tree of height h ≥ 1 has at least 2·minimum^(h−1) leaves, which
+    bounds the height from the leaf count.
+  - An erase's commits before its last remove a suffix of their leaf. That
+    adds no entry, so they need no page.
+  - An insertion of P pieces makes ⌈P / words⌉ segments. Every piece but
+    the last holds 2^24 − 1 rows or at least (2^38 − 1)/2 units: it holds a
+    row of at least q units, and stops where one more row (at most q + 1)
+    would pass the field. That bounds P before the insertion.
+  - Pages an edit frees go to the tree's spare lists, which are trimmed
+    after the edit.
 - **Branches.**
   - Replacing slots [a, a + g) by the new children rebuilds the node's
     prefixes from the children's (rows, total), which come exactly from
@@ -1122,6 +1160,115 @@ Known prototype simplifications, each to be removed in the package form:
 - `coarsen` and `forget` are an erase followed by an insert;
 - rows and heights are plain integer aliases, not wrapper types;
 - pages come from `new`, not stx_btree's page allocators.
+
+## 9. Measured results (M4, 2026-11-12)
+
+These are measurements on one machine and one build, recorded as the
+integrator reported them. The report is
+`mac_handoff_results/2026-11-12-order-statistic.md`, and the CSVs are
+`build/os-results-{1e7,1e6,budget}.csv` on the M4. No claim beyond these
+numbers is made.
+
+- **Setup:**
+  - stx_auxlib `claude/btree-order-statistic-research` at 347da40, then
+    c558eca (the check fix).
+  - B0 compiles GUI.Forms' RowHeightIndex from the integration mirror at
+    d0cc67e6e.
+  - Seven fresh-process runs per cell (run 0 is the checked pass), run
+    alone. The variants (§5.1) and workloads W1-W9 (§5.2) are as defined
+    above. Times are medians in ms, with [min-max] where reported.
+
+### 9.1 Correctness
+
+- **Exhaustive check (E0, §5.4) at c558eca:** small scope under ASan+UBSan
+  and full scope in Release both pass. Each of linear-dense,
+  counting-dense, counting-odd-packed and counting-dense-limited ran
+  57,140 cases (small) and 13,446,670 (full). The packing-limit cases pass
+  for dense and odd-packed.
+- **Sanitizer:** 63 of 63 checked bench runs (7 variants × 9 workloads,
+  10^5 rows) under ASan+UBSan with leak detection gave no report.
+- **Bracketing:** every P-variant has 0 bracket violations, with
+  invariants ok, at 10^6 and 10^7. B0 also recorded 0.
+
+### 9.2 Times
+
+At 10^7 rows:
+
+| Variant | W4 PageDown | W5 full traversal | W6 jumps |
+|---|---|---|---|
+| B0 | 17.50 [17.29-17.74] | 9003.5 [8960.8-9026.8] | 7.03 |
+| P1 | 30.77 | 12301 | 16.01 |
+| P2 | 31.68 | 15559 | 17.40 |
+| P3 | 41.41 | 19032 | 20.01 |
+| P4 | 5.37 [5.14-5.65] | 2090 [2082-2094] | 2.11 |
+| P5 | 6.05 | 2205 | 2.16 |
+| P6 | 6.16 [5.97-6.18] | 1928 [1924-1929] | 2.16 |
+
+At 10^6 rows:
+
+- W5: B0 767.5, P1 1137, P2 1416, P3 1661, P4 191.9, P5 204.8, P6 191.2;
+- W4: B0 17.73, P4 5.49, P5 5.90, P6 5.75.
+
+P4-P6 have lower medians than B0 on every workload but W1 at both sizes; W1
+is near 0.01 ms for every variant. The full tables for all nine workloads
+are in the CSVs.
+
+### 9.3 The run budget R
+
+P6 at 10^7 rows, W4 / W5 medians and the footprint the bench records at
+the end of W5:
+
+| R | W4 | W5 | Footprint |
+|---|---|---|---|
+| 10^4 | 5.78 | 1841 | 1.26 MB |
+| 10^5 | 5.75 | 1929 | 2.26 MB |
+| 10^6 | 5.71 | 2145 | 11.93 MB |
+
+**Default R = 10^4.** Of the three values tried, it gave the lowest W5 time
+and the smallest footprint. W4 differs by 0.07 ms across the three, which
+is within the spread of the other cells. The budget keeps detail within
+R/4 = 2500 rows of the anchor, well beyond the band of about 20 rows
+(1600 units of viewport and overscan at a mean of 89.5 units a row).
+Values below 10^4 were not tried, so this is the best measured value, not
+a measured optimum. R stays a GUI.Forms view policy (§8.1); the package
+provides `coarsen` and `run_count`.
+
+### 9.4 What carries the gain
+
+- **P1-P3 lose to B0** on W4, W5 and W6 at 10^7: 1.8× to 2.4× its time.
+  These are the tree alone, driven the way VirtualRowsView drives the
+  index today, with several root descents a row.
+- **The cursor mode (P4) carries the gain.** It is C3: one seek, then
+  O(1) steps, `seek_offset_from` from the previous position, and one
+  `set_heights` batch per stretch of unmeasured rows. P4 is P2 plus this
+  mode, and it takes W4 from 31.68 to 5.37 ms and W5 from 15559 to
+  2090 ms.
+- **Dense leaves (P5)** cost a little time against P4 (W4 6.05 vs 5.37 ms;
+  W5 2205 vs 2090 ms) for their memory per measured row.
+- **The budget (P6)** recovers W5 time (1928 ms against P5's 2205).
+- **Counting against linear search:** without cursors, the counting
+  search (P2) was slower than linear (P1) on W4 and W5. No linear variant
+  with cursors was measured. The package keeps the search a declared
+  choice (`SequenceConfig`) and ships the measured counting form. Whether
+  linear search is faster with cursors is an open measurement.
+
+### 9.5 What the package changes against the measured prototype
+
+- **Page reservation (§8.2):** each edit allocates its worst-case pages
+  first and returns the unused ones to a spare list kept at most 8 leaves
+  and 32 branches between edits. The prototype allocated on demand. A
+  set_heights over k rows reserves for about k/words + k/minimum + 2
+  commits.
+- **Merge or borrow** for underfull leaves next to dense siblings (§8.2).
+- **Fixed scratch buffers.** These replace the prototype's vectors, so an
+  index object holds about 40 KB of scratch at the production
+  configuration.
+- **Cursors:** they carry their tree's identity and re-seek when stale or
+  foreign.
+
+These keep the operations and their counts, but the times in §9.2 are the
+prototype's. The package should be re-measured with W1-W9 before GUI.Forms
+quotes them.
 
 ## Sources
 
