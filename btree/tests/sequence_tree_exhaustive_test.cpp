@@ -348,6 +348,15 @@ public:
         if (tree.count() != n || tree.total() != model.total()) {
             return "count or total";
         }
+        RowCount measured = 0;
+        for (RowCount row = 0; row < n; row += 1) {
+            if (model.state(row) == RowState::measured) {
+                measured += 1;
+            }
+        }
+        if (tree.measured_count() != measured) {
+            return "measured_count";
+        }
         Units top = 0;
         for (RowCount row = 0; row < n; row += 1) {
             const SequenceExtent extent = tree.extent_of(row);
