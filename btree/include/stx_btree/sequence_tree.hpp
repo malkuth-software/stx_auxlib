@@ -483,7 +483,7 @@ public:
     // cannot be allocated.
     explicit SequenceTree(Units estimate, const Allocator& allocator = Allocator())
         : allocator_(allocator), root_(nullptr), height_(0), rows_(0), total_(0), leaves_(0), branches_(0),
-          entries_(0), revision_(1), estimate_(usable_estimate(estimate)), spare_leaves_(nullptr),
+          entries_(0), measured_rows_(0), revision_(1), estimate_(usable_estimate(estimate)), spare_leaves_(nullptr),
           spare_branches_(nullptr), spare_leaf_count_(0), spare_branch_count_(0), run_storage_(), runs_(nullptr),
           edit_(nullptr), pieces_(nullptr), child_storage_(), made_(nullptr), carry_(nullptr), kids_(nullptr),
           path_() {
@@ -511,6 +511,9 @@ public:
     [[nodiscard]] Units total() const noexcept { return total_; }
     [[nodiscard]] Units estimate() const noexcept { return estimate_; }
     [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; }
+    // Rows in the measured state. O(1): each leaf commit adjusts it by its
+    // leaves' measured rows before and after (I6).
+    [[nodiscard]] RowCount measured_count() const noexcept { return measured_rows_; }
 
     // The heights of rows [0, row); row >= count() gives total().
     [[nodiscard]] Units offset_of(RowCount row) const noexcept {
@@ -983,6 +986,7 @@ public:
         std::size_t leaves_seen = 0;
         std::size_t branches_seen = 0;
         std::size_t entries_seen = 0;
+        RowCount measured_seen = 0;
         if (height_ == 0) {
             const Leaf& root = *static_cast<const Leaf*>(root_);
             const char* failure = check_leaf(root, true);
@@ -992,6 +996,7 @@ public:
             leaf_sums(root, root_rows, root_total);
             leaves_seen = 1;
             entries_seen = root.length;
+            measured_seen = leaf_measured_rows(root);
         } else {
             const Branch& root = *static_cast<const Branch*>(root_);
             if (root.length < 2) {
@@ -1027,6 +1032,7 @@ public:
                     }
                     leaves_seen += 1;
                     entries_seen += leaf.length;
+                    measured_seen += leaf_measured_rows(leaf);
                     continue;
                 }
                 const Branch& below = *static_cast<const Branch*>(child);
@@ -1047,6 +1053,9 @@ public:
         }
         if (leaves_seen != leaves_ || branches_seen != branches_ || entries_seen != entries_) {
             return fail(report, "node or entry tallies differ");
+        }
+        if (measured_seen != measured_rows_) {
+            return fail(report, "measured row tally differs");
         }
         return report;
     }
@@ -1369,6 +1378,7 @@ private:
         leaves_ = 0;
         branches_ = 0;
         entries_ = 0;
+        measured_rows_ = 0;
     }
 
     // ---- leaves ----
@@ -1405,6 +1415,32 @@ private:
             rows = rows + run.count;
             total = total + run.total;
         }
+    }
+
+    // The rows of a leaf in the measured state: every row of a dense leaf.
+    [[nodiscard]] static RowCount leaf_measured_rows(const Leaf& leaf) noexcept {
+        if (leaf.dense != 0) {
+            return static_cast<RowCount>(leaf.length);
+        }
+        RowCount rows = 0;
+        for (std::uint32_t index = 0; index < leaf.length; index += 1) {
+            const Run run = PackedEntry::decode(leaf.words[index]);
+            if (run.state == RowState::measured) {
+                rows = rows + run.count;
+            }
+        }
+        return rows;
+    }
+
+    [[nodiscard]] RowCount pieces_measured_rows() const noexcept {
+        const RunBuffer<run_capacity>& pieces = *pieces_;
+        RowCount rows = 0;
+        for (std::size_t index = 0; index < pieces.size(); index += 1) {
+            if (pieces[index].state == RowState::measured) {
+                rows = rows + pieces[index].count;
+            }
+        }
+        return rows;
     }
 
     [[nodiscard]] static Units leaf_total(const Leaf& leaf) noexcept {
@@ -1957,6 +1993,7 @@ private:
     void commit_leaf_edit(std::size_t edit_index) noexcept {
         Leaf* leaf = path_.leaf;
         entries_ = entries_ - (*leaf).length;
+        measured_rows_ = measured_rows_ - leaf_measured_rows(*leaf);
         expand_runs();
         std::size_t index = edit_index;
         Leaf* sibling = nullptr;
@@ -1990,6 +2027,7 @@ private:
                     first_slot = parent_level.slot - 1;
                 }
                 entries_ = entries_ - (*sibling).length;
+                measured_rows_ = measured_rows_ - leaf_measured_rows(*sibling);
                 replaced = 2;
                 // Same-kind or dense-into-packed merges fit two leaves (own
                 // < leaf_minimum <= capacity / 4). Only packed own pieces
@@ -2005,6 +2043,7 @@ private:
             }
         }
         entries_ = entries_ + (*pieces_).size();
+        measured_rows_ = measured_rows_ + pieces_measured_rows();
         if (height_ == 0) {
             if ((*pieces_).empty()) {
                 (*leaf).length = 0;
@@ -2243,10 +2282,11 @@ private:
     std::uint32_t height_;
     RowCount rows_;
     Units total_;
-    // Live pages and entries (I6).
+    // Live pages, entries and measured rows (I6).
     std::size_t leaves_;
     std::size_t branches_;
     std::size_t entries_;
+    RowCount measured_rows_;
     std::uint64_t revision_;
     Units estimate_;
     // Reserved pages not in the tree, linked through their storage.

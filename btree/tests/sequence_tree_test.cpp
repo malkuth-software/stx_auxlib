@@ -543,6 +543,13 @@ void check_row_height_index(SplitMix64& random) {
             index.advance(cursor);
         }
         TestFailure::expect(cursor.at_end() && index.total().value == top, "index", "total");
+        std::size_t measured = 0;
+        for (const RowState state : model.states) {
+            if (state == RowState::measured) {
+                measured += 1;
+            }
+        }
+        TestFailure::expect(index.measured_count() == static_cast<RowCount>(measured), "index", "measured_count");
     }
     TestFailure::expect(index.node_count() > 0 && index.page_bytes() > 0 && index.depth() >= 2, "index",
                         "storage statistics");

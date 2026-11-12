@@ -114,6 +114,8 @@ public:
     bool assign(RowCount rows, HeightUnits estimate) { return tree_.assign(rows, estimate.value); }
 
     [[nodiscard]] RowCount count() const noexcept { return tree_.count(); }
+    // Rows in the measured state, O(1).
+    [[nodiscard]] RowCount measured_count() const noexcept { return tree_.measured_count(); }
     [[nodiscard]] HeightUnits total() const noexcept {
         const HeightUnits sum{tree_.total()};
         return sum;
