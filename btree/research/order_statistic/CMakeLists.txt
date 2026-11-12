@@ -33,6 +33,8 @@ endif()
 
 foreach(bench IN ITEMS order_statistic_bench order_statistic_bench_counting)
     add_executable(${bench} ${bench_sources})
+    # The package's headers, for the S5 and S6 variants.
+    target_include_directories(${bench} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
     target_compile_options(${bench} PRIVATE ${research_options})
     target_link_options(${bench} PRIVATE ${research_link_options})
     if(GUI_FORMS_ROOT)

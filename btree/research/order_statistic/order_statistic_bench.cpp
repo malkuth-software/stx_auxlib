@@ -1,4 +1,5 @@
-// The chat workloads over B0 and the prototype variants (study §5). One
+// The chat workloads over B0, the prototype variants and the package's
+// RowHeightIndex (S5, S6; study §5 and §9.5). One
 // process runs one variant on one workload and prints one CSV line, so
 // every run starts fresh and the allocator figures belong to that run;
 // run_bench.sh loops over variants, workloads and repetitions.
@@ -374,7 +375,7 @@ int main(int argc, char** argv) {
                     "bracket_violations,budget,invariants,descents,node_visits\n");
         return 0;
     }
-    if (options.variant == "P6" && options.budget == 0) {
+    if ((options.variant == "P6" || options.variant == "S6") && options.budget == 0) {
         options.budget = 100000;
     }
 #if defined(ORDER_STATISTIC_HAS_BASELINE)
@@ -396,6 +397,9 @@ int main(int argc, char** argv) {
     }
     if (options.variant == "P5" || options.variant == "P6") {
         return run_variant<PrototypeIndex<P5Config>, true>(options);
+    }
+    if (options.variant == "S5" || options.variant == "S6") {
+        return run_variant<stx_btree_research::PackageIndex, true>(options);
     }
     std::fprintf(stderr, "unknown variant: %s\n", options.variant.c_str());
     return 2;

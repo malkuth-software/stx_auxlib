@@ -1270,6 +1270,66 @@ These keep the operations and their counts, but the times in §9.2 are the
 prototype's. The package should be re-measured with W1-W9 before GUI.Forms
 quotes them.
 
+### 9.6 Re-measuring the package (S5, S6; commands for the integrator, not run)
+
+The bench's S5 and S6 variants run the package's
+`stx_btree::RowHeightIndex<>` (btree/include) through the cursor driver,
+as P5 and P6 run the prototype; S6 takes the default budget R = 100000
+like P6. Two differences from P5/P6 are the adapter's, not the package's:
+the cursor's fields are copied from the package cursor after each seek
+and step, and set_heights converts Units to HeightUnits in a kept
+scratch vector. The package keeps no descent counters, so the counting
+pass reports 0 for S5 and S6. B0 must be the old GUI.Forms index (base
+8e84e0a7d), not a checkout that already adapts the package; the commands
+export it beside the research worktree.
+
+```sh
+# 0. The B0 baseline at GUI.Forms 8e84e0a7d (the old OrderStatisticTree index).
+mkdir -p ~/Developer/gui_forms_workers/research/b0-gui_forms-8e84e0a && \
+git -C ~/Developer/gui_forms_workers/c31c/gui_forms archive 8e84e0a7d \
+  src/controls/collections/row_height_index.hpp src/controls/collections/row_height_index.cpp \
+  src/core/collections/order_statistic_tree.hpp | tar -x -C ~/Developer/gui_forms_workers/research/b0-gui_forms-8e84e0a
+
+# 1. Sync the research worktree and the baseline.
+for d in stx_auxlib b0-gui_forms-8e84e0a; do /usr/bin/rsync -rl --checksum --no-times --delete --omit-dir-times \
+  --exclude='/build*/' ~/Developer/gui_forms_workers/research/$d/ \
+  m4mini:Developer/Projects/gui_forms_workers/research/$d/; done
+
+# 2. Sanitizer build: every variant and workload, checked, at 10^5 rows.
+ssh m4mini 'set -e; export PATH=/opt/homebrew/opt/llvm@22/bin:/opt/homebrew/bin:/usr/bin:/bin; \
+  cd ~/Developer/Projects/gui_forms_workers/research/stx_auxlib; \
+  cmake -S btree/research/order_statistic -B build/pkg-sanitize -DCMAKE_BUILD_TYPE=Debug \
+    -DCMAKE_CXX_COMPILER=clang++ -DORDER_STATISTIC_SANITIZE=ON \
+    -DGUI_FORMS_ROOT=$HOME/Developer/Projects/gui_forms_workers/research/b0-gui_forms-8e84e0a; \
+  cmake --build build/pkg-sanitize -j 8; \
+  export ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1; \
+  for v in B0 P5 P6 S5 S6; do for w in W1 W2 W3 W4 W5 W6 W7 W8 W9; do \
+    build/pkg-sanitize/order_statistic_bench --variant $v --workload $w --rows 100000 --check; \
+  done; done'
+
+# 3. Release build, then 7 fresh processes per variant and workload at 10^7 and 10^6 rows,
+#    with P5/P6 beside S5/S6 in the same session so the prototype-to-package difference is
+#    measured on one machine state.
+ssh m4mini 'set -e; export PATH=/opt/homebrew/opt/llvm@22/bin:/opt/homebrew/bin:/usr/bin:/bin; \
+  cd ~/Developer/Projects/gui_forms_workers/research/stx_auxlib; \
+  cmake -S btree/research/order_statistic -B build/pkg-release -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CXX_COMPILER=clang++ \
+    -DGUI_FORMS_ROOT=$HOME/Developer/Projects/gui_forms_workers/research/b0-gui_forms-8e84e0a; \
+  cmake --build build/pkg-release -j 8; \
+  sh btree/research/order_statistic/run_bench.sh build/pkg-release build/pkg-results-1e7.csv 10000000 7 "B0 P5 P6 S5 S6"; \
+  sh btree/research/order_statistic/run_bench.sh build/pkg-release build/pkg-results-1e6.csv 1000000 7 "B0 P5 P6 S5 S6"'
+```
+
+- Outputs: `build/pkg-results-*.csv` (timed; compare S5 with P5 and S6
+  with P6 per workload by median and spread), `*.csv.check` (S5 and S6
+  must show 0 bracketing violations and `ok`); in the timed files the
+  `page_bytes` column counts live pages only, and the package's spare
+  pages and its fixed scratch appear only in `allocator_bytes`.
+- A difference between S and P beyond the run-to-run spread is the
+  package's (reservation, fixed scratch, merge-or-borrow, cursor
+  identity) or the adapter's cursor copy; the counting build of P5/P6
+  bounds the descents, so a slower S with equal work points at constants.
+
 ## Sources
 
 - M. Pătraşcu and E. D. Demaine, "Logarithmic Lower Bounds in the Cell-Probe
