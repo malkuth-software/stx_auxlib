@@ -328,6 +328,21 @@ if(STX_AUXLIB_TESTS)
             "TSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tests/tsan_btree_suppressions.txt:halt_on_error=1")
     endforeach()
 
+    # The sequence tree and RowHeightIndex (btree/docs/ORDER_STATISTIC_RESEARCH.md
+    # §8): the proved properties, and the exhaustive small-scope check at its
+    # small scope (`--scope full` by hand).
+    foreach(sequence_test IN ITEMS sequence_tree sequence_tree_exhaustive)
+        add_executable(stx_btree_${sequence_test}_test btree/tests/${sequence_test}_test.cpp)
+        target_include_directories(stx_btree_${sequence_test}_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/btree/tests)
+        target_link_libraries(stx_btree_${sequence_test}_test PRIVATE stx_auxlib::global_allocator)
+        if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+            target_compile_options(stx_btree_${sequence_test}_test PRIVATE
+                -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+        endif()
+        add_test(NAME stx_btree_${sequence_test}_test COMMAND stx_btree_${sequence_test}_test)
+        set_tests_properties(stx_btree_${sequence_test}_test PROPERTIES TIMEOUT 1200)
+    endforeach()
+
     add_executable(stx_auxlib_voting_tests tests/voting_tests.cpp)
     target_link_libraries(stx_auxlib_voting_tests PRIVATE stx_auxlib::stx_auxlib)
     add_test(NAME stx_auxlib_voting_tests
