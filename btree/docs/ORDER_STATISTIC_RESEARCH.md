@@ -838,10 +838,22 @@ After every operation, the tree must match the model:
 - `seek_offset` and `seek_offset_from` (from the middle row) at the same
   offsets.
 
-Two targeted cases cover the packed-field limits, which small rows cannot
-reach. One is a run of 2^24 + 4 rows, measured and coarsened across the
-entry boundary. The other is a run of 300 rows of 2^30 units, split by
-total. The check enumerates every case of that size; it is complete for
+Named cases cover the packed-field limits, which small rows cannot reach
+(L = 2^24 - 1, the packed-count limit). In both long-run cases, row L is
+measured at 7 and then `coarsen(10, L)` runs. Each records `offset_of`
+outside the range before coarsening and checks it bit for bit afterwards,
+along with the total and Lemma S inside the range:
+
+- "long run, interior coarsen": L + 40 rows, so the range [10, L + 10)
+  lies inside and crosses the entry boundary.
+- "long run, coarsen clamped at the end": L + 5 rows, so the range clamps
+  to [10, L + 5).
+
+The first M4 run failed this second case. The fault was in the check, not
+the tree: the check expected the range to end at 10 + L, past the end. The
+tree had kept offset(10) and the total exactly, as the invariant requires.
+
+A third case is a run of 300 rows of 2^30 units, split by total. The check enumerates every case of that size; it is complete for
 that size rather than sampled, and the general case rests on the proofs
 (§4, §8.2).
 

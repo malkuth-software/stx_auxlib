@@ -544,45 +544,108 @@ bool run_config(const char* name, bool full) {
     return true;
 }
 
+// A run of `rows` estimated rows of 2 units (rows > packed_count_limit, so
+// it is stored as two or more entries) whose row packed_count_limit is
+// measured at 7, then coarsen(10, packed_count_limit). Checks, against values
+// recorded before the coarsen: offset_of bit for bit at rows at or before 10
+// and at or after the range's end (clamped to count()), the total, and
+// Lemma S inside the range.
+template <typename Tree>
+bool check_long_run_coarsen(const char* name, const char* label, RowCount rows) {
+    const RowCount limit = packed_count_limit;
+    const RowCount first = 10;
+    Tree tree(2);
+    if (!tree.assign(rows, 2) || tree.run_count() < 2 || !tree.check_invariants().ok) {
+        std::fprintf(stderr, "FAILED %s [%s]: long run not split\n", name, label);
+        return false;
+    }
+    const RowCount probes[] = {0, 1, limit - 1, limit, limit + 1, rows - 1, rows};
+    for (const RowCount row : probes) {
+        const Units expected = 2 * static_cast<Units>(row);
+        const bool at_row = tree.offset_of(row) == expected;
+        const bool inverse = row == rows || (tree.row_at(expected) == row && tree.row_at(expected + 1) == row);
+        if (!at_row || !inverse) {
+            std::fprintf(stderr, "FAILED %s [%s]: long run offsets at %llu\n", name, label,
+                         static_cast<unsigned long long>(row));
+            return false;
+        }
+    }
+    if (!tree.set_height(limit, 7)) {
+        std::fprintf(stderr, "FAILED %s [%s]: set_height on a long run\n", name, label);
+        return false;
+    }
+    const RowCount end = rows - first > limit ? first + limit : rows;
+    const RowCount taken = end - first;
+    // Rows outside [first, end), recorded before coarsening.
+    const RowCount outside_rows[] = {0, 1, first - 1, first, end, end + 1, end + 7, rows - 1, rows};
+    Units recorded[9]{};
+    bool kept[9]{};
+    for (std::size_t index = 0; index < 9; index += 1) {
+        const RowCount row = outside_rows[index];
+        kept[index] = (row <= first || row >= end) && row <= rows;
+        recorded[index] = kept[index] ? tree.offset_of(row) : 0;
+    }
+    const Units total_before = tree.total();
+    const Units start = tree.offset_of(first);
+    const Units sum = tree.offset_of(end) - start;
+    // The range holds the measured row: 2 units a row plus 5.
+    if (sum != 2 * static_cast<Units>(taken) + 5 || start != 20) {
+        std::fprintf(stderr, "FAILED %s [%s]: sums before coarsening\n", name, label);
+        return false;
+    }
+    tree.coarsen(first, limit);
+    if (tree.count() != rows || tree.total() != total_before) {
+        std::fprintf(stderr, "FAILED %s [%s]: count or total changed by coarsening\n", name, label);
+        return false;
+    }
+    for (std::size_t index = 0; index < 9; index += 1) {
+        if (kept[index] && tree.offset_of(outside_rows[index]) != recorded[index]) {
+            std::fprintf(stderr, "FAILED %s [%s]: offset outside the coarsened range moved at %llu\n", name, label,
+                         static_cast<unsigned long long>(outside_rows[index]));
+            return false;
+        }
+    }
+    const Units base = sum / static_cast<Units>(taken);
+    const Units taller = sum % static_cast<Units>(taken);
+    const RowCount inside_rows[] = {0, 1, 2, 4, 5, 6, 8, taken - 1};
+    for (const RowCount within : inside_rows) {
+        const Units wanted = static_cast<Units>(within);
+        const Units extra = wanted < taller ? wanted : taller;
+        const Units top = start + wanted * base + extra;
+        const Units height = base + (wanted < taller ? 1 : 0);
+        const stx_btree_research::RowExtent extent = tree.extent_of(first + within);
+        if (tree.offset_of(first + within) != top || extent.top != top || extent.height != height ||
+            extent.state != RowState::approximate) {
+            std::fprintf(stderr, "FAILED %s [%s]: Lemma S inside the coarsened range at %llu\n", name, label,
+                         static_cast<unsigned long long>(within));
+            return false;
+        }
+    }
+    if (!tree.check_invariants().ok) {
+        std::fprintf(stderr, "FAILED %s [%s]: invariants after coarsening\n", name, label);
+        return false;
+    }
+    return true;
+}
+
 // The packed-field limits: a run past 2^24 - 1 rows and a run past
 // 2^38 - 1 units, each split into entries by Lemma S.
 template <typename Config>
 bool run_packing_cases(const char* name) {
     using Tree = SequenceTree<Config>;
     const RowCount limit = packed_count_limit;
-    {
-        Tree tree(2);
-        if (!tree.assign(limit + 5, 2) || tree.run_count() < 2 || !tree.check_invariants().ok) {
-            std::fprintf(stderr, "FAILED %s: long run not split\n", name);
-            return false;
-        }
-        const RowCount probes[] = {0, 1, limit - 1, limit, limit + 1, limit + 4};
-        for (const RowCount row : probes) {
-            const Units expected = 2 * static_cast<Units>(row);
-            if (tree.offset_of(row) != expected || tree.row_at(expected) != row || tree.row_at(expected + 1) != row) {
-                std::fprintf(stderr, "FAILED %s: long run offsets at %llu\n", name,
-                             static_cast<unsigned long long>(row));
-                return false;
-            }
-        }
-        // Measure row `limit` at 7, then coarsen rows [10, 10 + limit):
-        // offsets outside are unchanged, inside follow Lemma S.
-        if (!tree.set_height(limit, 7)) {
-            std::fprintf(stderr, "FAILED %s: set_height on a long run\n", name);
-            return false;
-        }
-        const Units before_end = tree.offset_of(10 + limit);
-        tree.coarsen(10, limit);
-        const Units sum = 2 * static_cast<Units>(limit) + 5;
-        const bool outside = tree.offset_of(10) == 20 && tree.offset_of(10 + limit) == before_end &&
-                             before_end == 20 + sum && tree.total() == 2 * static_cast<Units>(limit + 5) + 5;
-        const Units inside = tree.offset_of(10 + 8);
-        // Base 2, five taller rows: row 10 + i starts at 20 + 2i + min(i, 5).
-        const bool lemma = inside == 20 + 16 + 5 && tree.extent_of(12).height == 3 && tree.extent_of(16).height == 2;
-        if (!outside || !lemma || !tree.check_invariants().ok) {
-            std::fprintf(stderr, "FAILED %s: coarsening a long run\n", name);
-            return false;
-        }
+    // Named case "long run, interior coarsen": the coarsened range
+    // [10, 10 + limit) lies inside the sequence and crosses the boundary
+    // between the two packed entries of the long run.
+    if (!check_long_run_coarsen<Tree>(name, "long run, interior coarsen", limit + 40)) {
+        return false;
+    }
+    // Named case "long run, coarsen clamped at the end": the case the first
+    // M4 run reported. coarsen(10, limit) on limit + 5 rows covers rows
+    // [10, limit + 5) only (coarsen clamps to the end, as the model does);
+    // the old check expected the range to end at 10 + limit.
+    if (!check_long_run_coarsen<Tree>(name, "long run, coarsen clamped at the end", limit + 5)) {
+        return false;
     }
     {
         const Units tall = static_cast<Units>(1) << 30;
