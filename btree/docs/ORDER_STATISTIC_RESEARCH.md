@@ -2,10 +2,12 @@
 
 Research track for moving GUI.Forms' `RowHeightIndex` into stx_btree. It is
 written to be resumed from: the state, the decisions taken so far and the
-next step are in the last section. Nothing here is code yet, and no figure
-here is a measurement unless it names its run. Statements recalled from a
-source but not re-read during this study are marked *(recalled)*. They are
-listed for checking in the downloads request at the end.
+next step are in §7. The owner's decisions of 2026-11-12 are in §6. The
+research harness and the API design built on them are in §8. No figure
+here is a measurement unless it names its run. Every bound is cited to a
+source that was read. The one exception, Iacono's bound, is marked
+*(secondary)*: no publisher or author copy was available, and it is stated
+from a secondary source.
 
 ## 0. The question and the short answer
 
@@ -113,17 +115,29 @@ What this means for row heights:
   This derivation is mine. The paper states this exact form (its Theorem 5)
   for dynamic connectivity, not for partial sums.
 - **Buffer trees** (Arge, WADS 1995 / Algorithmica 2003) and **B^ε-trees**
-  (Brodal and Fagerberg, SODA 2003; Bender et al., ";login:" 2015) buffer
-  updates. A B^ε-tree has updates O(log_B n / (ε·B^(1-ε))) and queries
-  O((1/ε)·log_B n) *(recalled)*. Putting t_u ≈ log_B n / B^(1-ε) into the
-  trade-off gives t_q = Ω((1/ε)·log_B n), so the B^ε trade-off is on the
-  curve. Buffering pays only when updates outnumber queries by a large
+  buffer updates.
+  - Brodal and Fagerberg (SODA 2003, §3.4, "B-trees with buffers") give a
+    B-tree of degree B^ε with an O(1)-block buffer per node: queries take
+    O((1/ε)·log_B(N/M)) I/Os, and B updates take amortized
+    O((B^ε/ε)·log_B(N/M)) I/Os, i.e. O(log_B(N/M) / (ε·B^(1-ε))) per update.
+  - Their lower bounds are for comparison-based dictionaries: if N
+    insertions perform at most δN/B I/Os, some query needs
+    Ω(log_{δ log² N}(N/M)) I/Os, for δ = O(B / log³ N) and N ≥ M² (their
+    Theorem 1.1(3)).
+  - Bender et al. (";login:" 2015) give the name and an introduction; the
+    bounds above are taken from Brodal and Fagerberg's text.
+  - Putting t_u ≈ log_B n / B^(1-ε) into the partial-sums trade-off gives
+    t_q = Ω((1/ε)·log_B n), so the B^ε trade-off is on the curve for prefix
+    sums too. Buffering pays only when updates outnumber queries by a large
   factor. A list view queries every frame (row_at, offset_of) and measures
   a few rows per frame, so buffering would buy nothing here.
-- **Cache-oblivious B-trees** (Bender, Demaine and Farach-Colton, FOCS 2000 /
-  SICOMP 2005; van Emde Boas layout after Prokop 1999) reach O(log_B n) at
-  every level of the hierarchy without knowing B *(recalled)*. A
-  cache-aware B-tree tuned for one level (the 128-byte M-series line, or
+- **Cache-oblivious B-trees** (Bender, Demaine and Farach-Colton, SICOMP
+  35(2), 2005, abstract and §1) search in Θ(1 + log_{B+1} N) memory
+  transfers at every level of the hierarchy without knowing B.
+  - Their first tree updates in O(1 + log_{B+1} N) amortized transfers.
+  - Their second scans S consecutive elements in O(1 + S/B) transfers and
+    updates in O(1 + log_{B+1} N + (log² N)/B) amortized transfers.
+  - A cache-aware B-tree tuned for one level (the 128-byte M-series line, or
   L2) reaches the same bound at that level. On these machines the
   structure's internal levels fit in L2 (§3.5), so the misses that matter
   are at one level only. Cache-obliviousness would add constant factors
@@ -157,14 +171,21 @@ target, not the exponent.
 
 ### 1.4 Finger and locality bounds
 
-- **Finger search trees:** with a finger at a known position, finding a
-  position at distance d costs O(log d). Insertions and deletions at a
-  finger cost O(1) amortized in level-linked (2,4)- or (a,b)-trees
-  (Huddleston and Mehlhorn, Acta Informatica 17, 1982) *(recalled)*.
-  Brodal's and others' worst-case variants exist *(recalled)*.
+- **Finger search trees** (Huddleston and Mehlhorn, Acta Informatica 17,
+  1982, pp. 157-158).
+  - Weak B-trees have every interior node with at least a and at most b
+    sons, b ≥ 2a, and all leaves at one depth.
+  - In level-linked weak B-trees, a finger is a pointer to a leaf; search
+    time is logarithmic in the distance from the finger, and fingers are
+    established and moved in constant time.
+  - Insertions and deletions take constant time on average over a sequence.
 - **Splay trees** have the working-set and dynamic-finger properties (Sleator
-  and Tarjan 1985; Cole 2000). Iacono's working-set structure (2001) gives
-  O(log t) for an item last used t operations ago *(recalled)*. These
+  and Tarjan 1985; Cole 2000).
+- Iacono's working-set structure (SODA 2001) searches in O(log t) for an
+  item whose last access was t distinct accesses ago, with O(log n)
+  insertions and deletions *(secondary: Wikipedia, "Iacono's working set
+  structure"; no publisher or author copy was available)*.
+- Splay-style structures restructure on reads. These
   restructure on reads: every query writes, which costs cache lines, rules
   out shared reading and is harder to prove bounded. A finger gives the
   locality the view needs with O(depth) state and no restructuring.
@@ -196,8 +217,11 @@ target, not the exponent.
   - An append burst of k estimated rows is one run: O(log n). This is
     already true today, because appended rows are estimated.
   - k appended *measured* rows go into the right spine: O(log n + k).
-- **Amortized rebalancing:** (a,b)-trees with b ≥ 2a do O(1) amortized node
-  splits and merges per update (Huddleston and Mehlhorn 1982) *(recalled)*.
+- **Amortized rebalancing:** weak B-trees with b ≥ 2a do rebalancing work
+  linear in the length of an insertion and deletion sequence that starts
+  from an empty tree, so O(1) amortized per update (Huddleston and Mehlhorn
+  1982, p. 158). The number of updates needing k rebalancing steps
+  decreases exponentially in k.
   The current tree does not merge underfull nodes. It compacts the whole
   tree when the depth passes a limit, and its "paid for by the growth"
   claim has no written proof (§2.5).
@@ -360,12 +384,13 @@ kind in stx_btree. It shares bbtree's machinery but not its key layout:
   - A measured row is a run with k = 1. An estimated run is (k, k·e).
   - A *coarsened* run (§4, C2) is any (k, S): the exact total of rows whose
     individual heights were dropped.
-- **Packed entry, 8 bytes:** count 24 bits, total 39 bits, state 1 bit.
-  - A run longer than 2^24 - 1 rows, or with a total of 2^39 or more, is
-    stored as several entries. Splitting is exact (div/mod above), so this
+- **Packed entry, 8 bytes:** count 24 bits, total 38 bits, state 2 bits
+  (estimated, measured, approximate).
+  - A run longer than 2^24 - 1 rows, or with a total of 2^38 or more, is
+    stored as several entries. Splitting is exact (Lemma S, §8.2), so this
     is invisible to the API.
-  - 10M rows at an estimate of 24 units is 1.5·10^10 < 2^39 ≈ 5.5·10^11, one
-    entry. Splitting is the cost of the packing; it is O(1) entries per
+  - 10M rows at an estimate of 24 logical units is 1.5·10^10 fixed units,
+    below 2^38 ≈ 2.7·10^11: one entry. Splitting is the cost of the packing; it is O(1) entries per
     10^7 rows.
 - **Dense leaf (optional, C4):** a leaf that is all measured single rows
   stores only heights: 4 bytes each (26.6, 32 bits), or 2 bytes as offsets
@@ -465,6 +490,9 @@ All rows measured, packed entries, 1 KiB leaves:
 
 ### 3.6 What RowHeightIndex becomes, and what GUI.Forms keeps
 
+(First sketch. The API under the owner's decisions is §8.1, which
+supersedes this block where they differ.)
+
 In stx_btree (namespace `stx_btree`, header-only like the rest):
 
 ```text
@@ -511,11 +539,10 @@ GUI.Forms keeps:
   become a second `SequenceTree` client with a tracked-leaf entry type, but
   nothing here requires that.
 
-Dependency direction: GUI.Forms would consume stx_auxlib's stx_btree. That
-wiring is planned for later with the status-review sibling (memory
-`stx-auxlib-ownership`), and the Windows sibling is comptroller of GUI.Forms
-and stx_auxlib (memory `mac-side-partition`). So the move needs the
-coordinator's routing (open question 3).
+Dependency direction (owner, 2026-11-12): GUI.Forms depends on stx_auxlib's
+btree module for the sequence tree and `RowHeightIndex`. stx_auxlib is
+worked on from the Mac side, so no cross-desk routing is needed; an earlier
+draft of this study said otherwise and was wrong.
 
 ## 4. Candidates, ranked by expected gain for the chat workload
 
@@ -654,9 +681,11 @@ support the proofs and do not replace them.
 - **Gain:** a provable O(1) amortized structural change per update, node
   count O(r / a), and no O(r) compaction pauses (a pause at 10M runs would
   be a frame hitch, though rare).
-- **Proof:** Huddleston and Mehlhorn's (a,b)-tree amortization for
-  b ≥ 2a *(recalled; to verify, see downloads)*. bbtree's rebalancing
-  removal is the implementation pattern.
+- **Proof:** Huddleston and Mehlhorn's weak B-tree analysis (b ≥ 2a: total
+  rebalancing linear in the number of updates from an empty tree, p. 158).
+  The prototype keeps b ≥ 2a at both node kinds (`static_assert`s in
+  `sequence_tree.hpp`). bbtree's rebalancing removal is the implementation
+  pattern.
 
 ### C7. Per-row estimates from an estimate source (accuracy; owner decision 5)
 
@@ -700,23 +729,30 @@ only, and none of its code is used.
 
 ## 5. Experiment plan (for the integrator, on the M4)
 
-Nothing below exists yet. The next step of this track is to write it under
-`btree/research/order_statistic/` (a standalone CMake project, not part of
-the package build). The baseline is GUI.Forms' current `RowHeightIndex` and
-`OrderStatisticTree`, compiled from the integration tree by path, for the
-experiment only: stx_auxlib's package must not depend on GUI.Forms.
+The harness is in `btree/research/order_statistic/` (§8.3), a standalone
+CMake project that is not part of the package build. The baseline is
+GUI.Forms' current `RowHeightIndex` and `OrderStatisticTree`, compiled from
+the integration tree by path, for the experiment only: stx_auxlib's
+package must not depend on GUI.Forms. Nothing has been compiled or run
+yet.
 
 ### 5.1 Variants
 
 | Id | Variant |
 |---|---|
-| B0 | GUI.Forms `RowHeightIndex` as is (`double`, vectors, linear scans) |
-| P1 | C1 + C4 packed entries: integer prefix-array branches (512 B), 1 KiB leaves, linear in-node scans |
-| P2 | P1 with C5 counting search in branches and leaves (leaf group totals) |
-| P3 | P2 with 1 KiB branches (42 children) |
-| P4 | P2 with C3 cursors used by the workload driver |
-| P5 | P4 with dense 4-byte leaves |
-| P6 | P4 with the C2 coarsening budget R ∈ {10^4, 10^5, 10^6} |
+| Id | Index | Driver | Variant |
+|---|---|---|---|
+| B0 | GUI.Forms `RowHeightIndex` | per row | as is (`double`, vectors, linear scans) |
+| P1 | `TreeConfig<21, 127, false, false>` | per row | C1 + C4 packed entries: integer prefix-array branches (512 B), 1 KiB leaves, linear in-node scans |
+| P2 | `TreeConfig<21, 127, true, false>` | per row | P1 with C5 counting search in branches (leaves stay linear; leaf group totals are a later variant) |
+| P3 | `TreeConfig<42, 127, true, false>` | per row | P2 with 1 KiB branches (42 children) |
+| P4 | `TreeConfig<21, 127, true, false>` | cursor | P2 with C3 cursors and window batches |
+| P5 | `TreeConfig<21, 127, true, true>` | cursor | P4 with dense 4-byte leaves |
+| P6 | as P5 | cursor | P5 with the C2 coarsening budget R (`--budget`, default 10^5; R's default is chosen from 10^4, 10^5, 10^6) |
+
+"Per row" is the call pattern `VirtualRowsView` uses today (§2.2); "cursor"
+is one seek per walk, steps, and one `set_heights` per stretch of
+unmeasured rows.
 
 ### 5.2 Workloads
 
@@ -729,14 +765,14 @@ unmeasured rows in the band.
 
 | Id | Workload | Emulates |
 |---|---|---|
-| W1 | `assign(N, 24)`, then a settle at row 0 and at N/2 | startup (CHAT 7.1) |
+| W1 | `assign(N, e)`, then a settle at row 0 and at N/2 (e = 89.5 units, the generator's mean) | startup (CHAT 7.1) |
 | W2 | 600 frames of fling scroll (40 units/frame, decaying 5% a frame, repeated) from N/2 | 7.4b |
-| W3 | 600 frames of one wheel notch (3 × 24 units) per frame | 7.4a |
+| W3 | 600 frames of one wheel notch (3 × e) per frame | 7.4a |
 | W4 | PageDown 3600 times | 7.4c (r growth) |
 | W5 | a full sequential traversal measuring every row | worst-case memory (gap 9.1) |
 | W6 | 1000 random `offset_of` jumps plus 100 thumb positions (`row_at(total × u)`), each followed by a settle | 7.5 |
-| W7 | append bursts of 10^4 estimated rows every 120 frames with follow-tail, plus measured appends of 10 rows per frame | 7.6 |
-| W8 | 1000 `set_height` on random measured rows, and 1000 `erase(row, k)` with k ∈ [1, 10^4] | 7.7 |
+| W7 | 30 bursts of 10^4 estimated rows with follow-tail, then 600 frames of 10 measured rows appended per frame | 7.6 |
+| W8 | 1000 `set_height` on random rows, and 1000 `erase(row, k)` with k ∈ [1, 10^4], a settle every 10 | 7.7 |
 | W9 | a width change (`assign`) plus re-measuring the band, 100 times | resize |
 
 ### 5.3 Metrics
@@ -763,84 +799,317 @@ unmeasured rows in the band.
 
 ### 5.4 E0: exhaustive small-scope check (proof support)
 
-All operation sequences of length ≤ 6 over at most 6 rows. Heights come
-from {0, 1, 2, 64, 2^39 - 1}, and runs are forced through split boundaries
-by setting node capacities to their minimum in a test configuration. After
-every operation, check every invariant I1-I4, the packed-field bounds and
-every query against the flat model. This enumerates every case up to that
-size, so it is complete for that size rather than sampled; the general case
-rests on §4's proofs.
+`order_statistic_exhaustive` (§8.3) runs four configurations at the
+smallest capacities the tree admits, so splits, merges, root growth and
+collapse, and dense and packed leaves all occur within a few operations:
+
+- branches of 4 slots with leaves of 3 words, linear search;
+- the same with counting search;
+- 5 slots with 4 words, counting, no dense leaves (the odd-slot tail path);
+- the counting form with a total limit of 2^33 units and a row limit of
+  200 rows, so refusals occur.
+
+From five start states (empty; 4 estimated rows; 9 measured rows; 30 rows
+with every other measured; 60 measured rows with a coarsened stretch and an
+insertion), every sequence of operations up to depth 3 (the first three
+states) or 2 (the larger two) is applied to the tree and to a flat model.
+`--scope small` uses depths 2 and 1 for the sanitizer run.
+
+The operations offered on n rows:
+
+- `set_height` at every row, with nine heights: 0, 1, 3, 64, 2^32 - 1,
+  2^32, 2^38 - 1, and the refused -1 and 2^38;
+- `set_heights` of 1-3 rows at every row, out-of-range runs included;
+- `insert` of 1, 2 or 4 rows at every position 0..n;
+- `erase` of 1, 2 or 5 rows (clamped), `forget` of 1 or 3, `coarsen` of
+  1, 2 or 4, at every row;
+- `assign` of 0 or 3 rows.
+
+That is 23n + 5 operations at each step.
+
+After every operation, the tree must match the model:
+
+- every invariant (§8.2), and the returned results (refusals included);
+- `count`, `total`, and `extent_of` and `offset_of` at every row and past
+  the end;
+- `row_at` at every row boundary, one unit either side, below zero and
+  past the total;
+- a full cursor walk;
+- `seek_offset` and `seek_offset_from` (from the middle row) at the same
+  offsets.
+
+Two targeted cases cover the packed-field limits, which small rows cannot
+reach. One is a run of 2^24 + 4 rows, measured and coarsened across the
+entry boundary. The other is a run of 300 rows of 2^30 units, split by
+total. The check enumerates every case of that size; it is complete for
+that size rather than sampled, and the general case rests on the proofs
+(§4, §8.2).
 
 ### 5.5 Commands (the integrator runs them; nothing here was run)
 
-The research worktree is not one of `m4ws`'s workspaces, so it is copied by
-rsync, as `m4ws` itself syncs:
+The research worktree is not one of `m4ws`'s workspaces, so it is copied
+with the same rsync options `m4ws` uses. The B0 baseline compiles
+`row_height_index.cpp` from the M4 mirror of the integration tree, which
+must be synced at the commit recorded with the results (`m4ws integration
+true` syncs it without building). The four steps run one after another, and
+nothing else may measure on the M4 during step 4 (AGENTS.md: trials
+sequential).
 
 ```sh
+# 1. Sync the research worktree.
 /usr/bin/rsync -rl --checksum --no-times --delete --omit-dir-times --exclude='/build*/' \
   ~/Developer/gui_forms_workers/research/stx_auxlib/ \
   m4mini:Developer/Projects/gui_forms_workers/research/stx_auxlib/
-ssh m4mini 'cd Developer/Projects/gui_forms_workers/research/stx_auxlib && \
-  /opt/homebrew/bin/cmake -S btree/research/order_statistic -B build/os-release \
-    -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm@22/bin/clang++ \
-    -DGUI_FORMS_ROOT=$HOME/Developer/Projects/gui_forms_workers/integration/gui_forms && \
-  /opt/homebrew/bin/cmake --build build/os-release -j 8 && \
-  build/os-release/order_statistic_exhaustive && \
-  build/os-release/order_statistic_bench --rows 100000,1000000,10000000 --variants all \
-    --workloads all --runs 7 --out build/os-release/results.csv'
-ssh m4mini 'cd Developer/Projects/gui_forms_workers/research/stx_auxlib && \
-  /opt/homebrew/bin/cmake -S btree/research/order_statistic -B build/os-sanitize \
-    -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm@22/bin/clang++ \
-    -DORDER_STATISTIC_SANITIZE=ON \
-    -DGUI_FORMS_ROOT=$HOME/Developer/Projects/gui_forms_workers/integration/gui_forms && \
-  /opt/homebrew/bin/cmake --build build/os-sanitize -j 8 && \
-  ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
-    build/os-sanitize/order_statistic_exhaustive && \
-  ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
-    build/os-sanitize/order_statistic_bench --rows 100000 --variants all --workloads all --runs 1 --check-only'
+
+# 2. Sanitizer build: exhaustive (small scope) and every variant/workload, checked, at 10^5 rows.
+ssh m4mini 'set -e; export PATH=/opt/homebrew/opt/llvm@22/bin:/opt/homebrew/bin:/usr/bin:/bin; \
+  cd ~/Developer/Projects/gui_forms_workers/research/stx_auxlib; \
+  cmake -S btree/research/order_statistic -B build/os-sanitize -DCMAKE_BUILD_TYPE=Debug \
+    -DCMAKE_CXX_COMPILER=clang++ -DORDER_STATISTIC_SANITIZE=ON \
+    -DGUI_FORMS_ROOT=$HOME/Developer/Projects/gui_forms_workers/integration/gui_forms; \
+  cmake --build build/os-sanitize -j 8; \
+  export ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1; \
+  build/os-sanitize/order_statistic_exhaustive --scope small; \
+  for v in B0 P1 P2 P3 P4 P5 P6; do for w in W1 W2 W3 W4 W5 W6 W7 W8 W9; do \
+    build/os-sanitize/order_statistic_bench --variant $v --workload $w --rows 100000 --check; \
+  done; done'
+
+# 3. Release build and the full-scope exhaustive check.
+ssh m4mini 'set -e; export PATH=/opt/homebrew/opt/llvm@22/bin:/opt/homebrew/bin:/usr/bin:/bin; \
+  cd ~/Developer/Projects/gui_forms_workers/research/stx_auxlib; \
+  cmake -S btree/research/order_statistic -B build/os-release -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CXX_COMPILER=clang++ \
+    -DGUI_FORMS_ROOT=$HOME/Developer/Projects/gui_forms_workers/integration/gui_forms; \
+  cmake --build build/os-release -j 8; \
+  build/os-release/order_statistic_exhaustive --scope full'
+
+# 4. Timed runs: 7 fresh processes per variant and workload at 10^7 rows (plus
+#    checked and counting passes), then the budget sweep that picks R's default.
+ssh m4mini 'set -e; cd ~/Developer/Projects/gui_forms_workers/research/stx_auxlib; \
+  sh btree/research/order_statistic/run_bench.sh build/os-release build/os-results-1e7.csv 10000000 7; \
+  sh btree/research/order_statistic/run_bench.sh build/os-release build/os-results-1e6.csv 1000000 7; \
+  for r in 10000 100000 1000000; do for run in 1 2 3 4 5 6 7; do for w in W4 W5; do \
+    build/os-release/order_statistic_bench --variant P6 --workload $w --rows 10000000 --budget $r --run $run \
+      >> build/os-results-budget.csv; \
+  done; done; done'
 ```
 
-- Builds, the sanitizer run and the timed run must not overlap (AGENTS.md:
-  trials sequential).
-- The integration tree must be at the commit recorded with the results.
-- The RunPod repeat uses the same two commands with GCC and Clang from that
-  host and `perf stat` around the bench.
+- Outputs: `build/os-results-*.csv` (timed), `*.csv.check` (bracketing
+  violations and invariants: P-variants must show 0 and `ok`; B0's
+  violations are recorded as evidence for §2.4), `*.csv.counting`
+  (descents and node visits for the P-variants).
+- Every bench process exits non-zero if a checked P-variant breaks an
+  invariant or the bracketing property, so `set -e` stops step 2 at the
+  first defect.
+- The RunPod (x86-64 Linux) repeats steps 2-4 with that host's Clang and
+  GCC, with `perf stat -e cycles,instructions,cache-misses,L1-dcache-load-misses,branch-misses`
+  around chosen bench invocations.
 
-## 6. Open questions for the owner
+## 6. Owner decisions (2026-11-12) and open questions
 
-1. **The target.** Accept that worst-case Θ(log n) per operation is already
-   at the proven lower bound, and aim at adaptive bounds (log r, log d,
-   k + log n), memory and constants? (Recommended.)
-2. **Fixed-point heights** in 1/64 logical units (26.6, as FreeType) inside
-   the index, with GUI.Forms converting at the boundary? (Recommended: it is
-   what makes C1's proofs and host-independence possible.)
-3. **Where it lives and who wires it:** generic `SequenceTree` plus a
-   concrete `RowHeightIndex` in stx_btree, with GUI.Forms depending on
-   stx_auxlib for it. This touches the Windows comptroller's ground and the
-   later GUI.Forms wiring.
-4. **Memory policy for chat:** the C2 coarsening budget (bounded, offsets
-   stable) as the default, dense leaves (C4) as well, or both? A default R?
-5. **Per-row estimates (CHAT decision 5):** adopt C7's estimate source, or
-   keep one estimate?
+Decided:
+
+1. **Target:** adaptive bounds (runs, finger, window), memory per row,
+   exactness, cache and constants. Worst-case Θ(log n) per operation is
+   already at the lower bound.
+2. **Heights** are exact 26.6 fixed point inside the index; doubles appear
+   only at the API edge (GUI.Forms converts).
+3. **Placement:** a generic sequence tree plus `RowHeightIndex` go into
+   stx_auxlib's btree module, and GUI.Forms depends on it.
+4. **Memory:** both packed and dense leaves (C4), and `coarsen()` under a
+   run budget R (C2), with offsets outside coarsened ranges unchanged. R's
+   default is chosen by experiment (§5.5 step 4).
+
+Open:
+
+5. **Per-row estimates (CHAT decision 5):** C7's estimate source, or one
+   estimate? Not yet put to the owner.
 
 ## 7. Track state (resume here)
 
-- **2026-11-12, done:** read the GUI.Forms code (integration
+- **2026-11-12, first pass:** read the GUI.Forms code (integration
   `claude/batch-cp29-2b-b`), CHAT_STRESS_SPEC §4.2, §7 and §9, the backlog
-  entry, stx_btree's DESIGN.md, OPTIMAL_TREES.md and node search; checked
-  the cell-probe bounds against the Pătraşcu-Demaine text (ar5iv HTML) and
-  Slotin's segment-tree article. Wrote this document.
-- **Decisions so far (proposals until the owner answers §6):** integer
-  heights; a sequence tree beside the maps reusing bbtree's pages, count
-  search and node stacks; runs as (count, total, state); cursors with a
-  structural revision.
-- **Next step:** write `btree/research/order_statistic/` (E0 exhaustive
-  check, P1 first, then the driver and B0 baseline) on this branch, then
-  hand the commands in §5.5 to the integrator. Code only after the
-  coordinator confirms §6.1-6.3, since they decide the API.
-- **To verify** (marked *(recalled)*): Huddleston-Mehlhorn amortization and
-  finger bounds; B^ε-tree bounds (Brodal-Fagerberg; Bender et al.);
-  cache-oblivious B-tree bounds; Iacono's working-set bound.
+  entry, and stx_btree's DESIGN.md, OPTIMAL_TREES.md and node search.
+  Checked the cell-probe bounds against the Pătraşcu-Demaine text and
+  Slotin's segment-tree article. Wrote §0-§5.
+- **2026-11-12, second pass:**
+  - Recorded the owner's decisions (§6) and corrected the dependency note
+    (§3.6).
+  - Verified the cited bounds against the papers: Huddleston-Mehlhorn,
+    Brodal-Fagerberg, and Bender-Demaine-Farach-Colton. The copies are kept
+    outside the repository in the session scratchpad and are not
+    committed. Iacono is cited from a secondary source only.
+  - Wrote the harness (§8.3) and the production API design (§8.1).
+- **Decisions in force:** §6 items 1-4.
+- **Next step:**
+  1. The integrator runs §5.5.
+  2. Record the results in §9 (a new section) with the GUI.Forms commit,
+     and choose R's default and the P-variant to productize.
+  3. Then write `stx_btree/sequence_tree.hpp` and
+     `stx_btree/row_height_index.hpp` in the package per §8.1, with the
+     prototype's checks as the package's tests, under the six stx_auxlib
+     builds.
+- **Open:** §6 item 5.
+
+## 8. The sequence tree under the decisions
+
+### 8.1 Production API (stx_btree, header-only)
+
+```text
+namespace stx_btree
+
+struct HeightUnits { std::int64_t value; }    1/64 logical unit (26.6); comparisons hand-written
+struct RowIndex    { std::uint64_t value; }   a row position; RowCount for counts
+enum class RowState : std::uint8_t { estimated, measured, approximate }
+struct RowExtent   { HeightUnits top; HeightUnits height; RowState state; }
+
+template <typename Traits, typename Allocator = GlobalPageAllocator>
+class detail::SequenceTree     the tree of §3: prefix-array branches (counting
+                               search), packed and dense leaves, weak B-tree
+                               rebalancing, node-stack cursors. Traits declares
+                               the entry (a run here), its (count, total)
+                               projection and its packing.
+
+template <typename Allocator = GlobalPageAllocator>
+class RowHeightIndex {
+public:
+    explicit RowHeightIndex(HeightUnits estimate, Allocator = {});
+    bool assign(RowCount rows, HeightUnits estimate);          refused past the limits
+    RowCount count() const;  HeightUnits total() const;  HeightUnits estimate() const;
+    HeightUnits offset_of(RowIndex) const;                     exact prefix sum
+    RowIndex row_at(HeightUnits) const;                        least r with offset_of(r + 1) > y
+    RowExtent extent_of(RowIndex) const;                       one descent
+    bool set_height(RowIndex, HeightUnits);                    refused (unchanged) if invalid
+    bool set_heights(RowIndex, std::span<const HeightUnits>);  one leaf pass per leaf touched
+    bool insert(RowIndex, RowCount);  void erase(RowIndex, RowCount);
+    bool forget(RowIndex, RowCount);                           back to the estimate
+    void coarsen(RowIndex, RowCount);                          keep the total, drop detail
+    class Cursor;                                              node stack, revision-checked
+    void seek_row(Cursor&, RowIndex) const;  void seek_offset(Cursor&, HeightUnits) const;
+    void seek_offset_from(Cursor&, HeightUnits) const;         O(log_B d) from a valid cursor
+    void advance(Cursor&) const;                               O(1) amortized
+    std::size_t node_count() const, run_count() const, depth() const, page_bytes() const;   all O(1)
+};
+```
+
+- **Failure:** expected alternatives are `bool` results; a refused call
+  leaves the index unchanged. Every page an edit needs is reserved before
+  it changes anything, so `std::bad_alloc` from the allocator also leaves
+  it unchanged (bbtree's rule; the prototype does not do this yet).
+- **Limits:**
+  - one row at most 2^38 - 1 units (4.3·10^9 logical units);
+  - the total and the row count below 2^62, checked with stx_auxlib's
+    checked arithmetic (`src/checked.hpp`); the one modular expression
+    (the counting search's sign test) is marked `STX_AUXLIB_MODULAR`.
+- **Execution:** one thread. A cursor is valid until the next edit; a stale
+  cursor is detected by the revision and re-seeks (house style section 4).
+- **GUI.Forms keeps:** the double/26.6 conversion (round to nearest after
+  the view's clamp), the view policies (anchor, overscan, follow-tail,
+  width changes, when to `forget` and `coarsen`, R), its counters, and
+  `BindingOrderTree` on its own tree.
+
+### 8.2 Invariants and proof sketches
+
+Invariants, checked by `check_invariants()` after every operation in E0:
+
+- **I1** All leaves are at one depth; each branch's `level` is its height.
+- **I2** Branch prefixes are exact:
+  `count_prefix[j] = Σ_{i≤j} rows(child i)` and
+  `height_prefix[j] = Σ_{i≤j} total(child i)`. Slots at or past `length`
+  hold all ones and no child.
+- **I3** Every entry has count ≥ 1 and total ≥ 0. Estimated entries are
+  uniform (total divisible by count). A packed entry's fields are within
+  24 and 38 bits. A dense leaf holds only measured single rows of at most
+  2^32 - 1 units, in a configuration that admits dense leaves.
+- **I4** Fill:
+  - a non-root branch holds between `branch_minimum = max(2, slots/4)` and
+    `slots` children;
+  - the root branch holds at least 2;
+  - a non-root leaf holds between `leaf_minimum = max(1, words/4)` and its
+    kind's capacity (`words` packed, `2·words` dense);
+  - capacities are at least twice the minimums (weak B-tree, b ≥ 2a).
+- **I5** The root's sums equal `count()` and `total()`; total ≤ total
+  limit < 2^62; rows ≤ row limit < 2^62.
+- **I6** The leaf, branch and entry tallies equal a walk's counts, so
+  `node_count()` and `run_count()` are O(1) and exact.
+
+Proof sketches (beyond C1-C3 in §4):
+
+- **Lemma S (splitting a run keeps every row's height).**
+  - A run (k, S) gives row i the height q + [i < s] with q = S div k and
+    s = S mod k. Its front i rows total T(i) = i·q + min(i, s).
+  - If i ≤ s, the front has total i(q + 1), so all its rows are q + 1, and
+    the back (k - i, (k - i)q + (s - i)) has q' = q and s' = s - i < k - i.
+    Its first s - i rows are q + 1, as before.
+  - If i > s, the front (i, iq + s) has q' = q and s' = s, and the back
+    ((k - i), (k - i)q) is uniform at q.
+  - In both cases every row keeps its height. Packing splits, edit splits
+    and coarsening's inside offsets rest on this lemma.
+- **Packing (expand).** A run past 2^24 - 1 rows or 2^38 - 1 units is cut
+  at i = min(2^24 - 1, the most rows with T(i) ≤ 2^38 - 1). Then i ≥ 1,
+  because one row is at most 2^38 - 1 units. Each cut is Lemma S, so the
+  row sequence is unchanged.
+- **Leaf edits.** An edit decodes the leaf into runs, edits them (Lemma S
+  at the cut ends), joins equal uniform estimated neighbours, re-packs, and
+  re-encodes into ⌈m / capacity⌉ leaves of even size. The one exception is
+  an edit in the last quarter that splits in two, which leaves the arriving
+  side max(m - capacity, capacity/4). Every chunk is at least the minimum:
+  - for two chunks, even sizes are ≥ capacity/2, and the end split gives
+    ≥ capacity/4 ≥ minimum on the right and min(capacity, m - capacity/4)
+    on the left;
+  - for L ≥ 3 chunks, m > (L - 1)·capacity, so each chunk exceeds
+    2·capacity/3.
+- **Underfull leaf.** A leaf left with 1 ≤ m < minimum is re-encoded with
+  its sibling's entries (a sibling exists: every non-root branch has ≥ 2
+  children by I4, and the root branch ≥ 2). The sibling held at least the
+  minimum, so the join holds at least the minimum. If it exceeds a
+  capacity, it splits as above. An emptied leaf is removed.
+- **Branches.**
+  - Replacing slots [a, a + g) by the new children rebuilds the node's
+    prefixes from the children's (rows, total), which come exactly from
+    prefix differences; I2 holds by construction.
+  - An overfull node splits evenly (each part ≥ slots/2 ≥ minimum) and
+    replaces its own slot in the parent; a split root grows a level.
+  - An underfull non-root node joins its sibling (combined ≥ minimum) and
+    splits again if over capacity.
+  - A root left with one child is replaced by it; with none, the tree is an
+    empty leaf.
+  - Where nothing changes shape, each ancestor adds the node's (Δrows,
+    Δtotal) to its prefixes from the node's slot on. That is exact, and
+    equal to rebuilding, because integer addition is associative (C1).
+  - The weak B-tree analysis (Huddleston and Mehlhorn 1982) bounds the
+    total split and merge work by O(number of updates) from an empty tree.
+- **Coarsen.** `coarsen(r, k)` computes S = offset_of(r + k) - offset_of(r),
+  erases the rows and inserts the run (k, S) at r. For x ≤ r, offset_of(x)
+  is a sum over rows before r, untouched. For x ≥ r + k it is that sum plus
+  S plus rows after, so it is unchanged (C2).
+- **Cursor finger.** `seek_offset_from` climbs from the leaf while the
+  target is outside the current node's [start, start + total), then
+  descends. Starts are exact by I2. A node d rows away is reached through
+  the lowest common ancestor, O(log_B d) levels above a leaf in a tree of
+  minimum fanout B/4.
+
+### 8.3 The harness (`btree/research/order_statistic/`)
+
+| File | Contents |
+|---|---|
+| `sequence_tree.hpp` | the prototype `SequenceTree<TreeConfig<slots, words, counting, dense, total limit, row limit>>`: queries, cursors, edits, `check_invariants()` |
+| `index_adapters.hpp` | `PrototypeIndex<Config>` and `BaselineIndex` (B0) over one interface in Units; B0 converts at its edge and checks bracketing in its own doubles |
+| `chat_workload.hpp` | the chat height generator, `ViewEmulator<Index, UseCursor>` (settle, anchor, band measuring, realize, run budget) |
+| `order_statistic_bench.cpp` | W1-W9 over B0 and P1-P6, one variant and workload per process, one CSV line; `--check` adds bracketing and invariants |
+| `order_statistic_exhaustive.cpp` | E0 (§5.4) and the packing-limit cases |
+| `CMakeLists.txt`, `run_bench.sh` | the standalone build (Release, sanitizer, counting) and the run loop |
+
+Known prototype simplifications, each to be removed in the package form:
+
+- no page reservation before an edit (a `std::bad_alloc` mid-edit can leave
+  the tree inconsistent);
+- `erase` visits each leaf in the range rather than detaching whole
+  subtrees, so it is O(log n) per leaf touched;
+- leaf search is linear (no group totals);
+- `coarsen` and `forget` are an erase followed by an insert;
+- rows and heights are plain integer aliases, not wrapper types;
+- pages come from `new`, not stx_btree's page allocators.
 
 ## Sources
 
@@ -864,18 +1133,24 @@ ssh m4mini 'cd Developer/Projects/gui_forms_workers/research/stx_auxlib && \
   2001.
 - L. Arge, "The buffer tree", WADS 1995; Algorithmica 37, 2003.
 - G. S. Brodal and R. Fagerberg, "Lower bounds for external memory
-  dictionaries", SODA 2003.
+  dictionaries", SODA 2003 (read from the authors' copy,
+  cs.au.dk/~gerth/papers/soda03.pdf: Theorem 1.1, §3.4).
 - M. A. Bender, M. Farach-Colton, W. Jannen, R. Johnson, B. C. Kuszmaul,
   D. E. Porter, J. Yuan and Y. Zhan, "An introduction to Bε-trees and
   write-optimization", ;login: 40(5), 2015.
 - M. A. Bender, E. D. Demaine and M. Farach-Colton, "Cache-oblivious
-  B-trees", FOCS 2000; SIAM J. Computing 35(2), 2005.
+  B-trees", FOCS 2000; SIAM J. Computing 35(2), 2005 (read from the
+  author's copy, erikdemaine.org/papers/CacheObliviousBTrees_SICOMP/:
+  abstract and §1).
 - S. Huddleston and K. Mehlhorn, "A new data structure for representing
-  sorted lists", Acta Informatica 17, 1982.
+  sorted lists", Acta Informatica 17, 157-184, 1982 (read from the author's
+  copy, people.mpi-inf.mpg.de/~mehlhorn/ftp/: summary and §1, pp. 157-158).
 - D. D. Sleator and R. E. Tarjan, "Self-adjusting binary search trees",
   J. ACM 32(3), 1985; R. Cole, "On the dynamic finger conjecture for splay
   trees", SIAM J. Computing 30(1), 2000; J. Iacono, "Alternatives to splay
-  trees with O(log n) worst-case access times", SODA 2001.
+  trees with O(log n) worst-case access times", SODA 2001, pp. 516-522
+  (not read: no publisher or author copy; its bound is cited from
+  Wikipedia, "Iacono's working set structure").
 - P. Bille, I. L. Gørtz and F. R. Skjoldjensen, "Partial Sums on the
   Ultra-Wide Word RAM", TAMC 2020; arXiv 1908.10159.
 - S. Slotin, *Algorithms for Modern Hardware*, en.algorithmica.org/hpc/:
