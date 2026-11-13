@@ -334,7 +334,7 @@ if(STX_AUXLIB_TESTS)
     foreach(sequence_test IN ITEMS sequence_tree sequence_tree_exhaustive)
         add_executable(stx_btree_${sequence_test}_test btree/tests/${sequence_test}_test.cpp)
         target_include_directories(stx_btree_${sequence_test}_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/btree/tests)
-        target_link_libraries(stx_btree_${sequence_test}_test PRIVATE stx_auxlib::global_allocator)
+        target_link_libraries(stx_btree_${sequence_test}_test PRIVATE stx_auxlib::stx_auxlib)
         if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
             target_compile_options(stx_btree_${sequence_test}_test PRIVATE
                 -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
